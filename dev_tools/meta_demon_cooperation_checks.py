@@ -266,6 +266,29 @@ class AssistanceLinkChecks(unittest.TestCase):
         self.assertEqual(MetaDemonAssistanceConfig(next_offering_script=' b ').next_offering_script, 'b')
         self.assertEqual(MetaDemonAssistanceConfig().next_offering_script, '')
 
+    def test_offerer_waits_while_assist_rests_for_fatigue(self):
+        from datetime import datetime, timedelta
+        from module.exception import TaskEnd
+        from tasks.MetaDemon.assistance import _defer_while_peer_rests
+        write_config(self.root, 'assist', role=AssistanceRole.ASSIST, peer='offer')
+        write_config(self.root, 'offer', role=AssistanceRole.OFFERING, peer='assist')
+        assist = AssistanceLink(self.make_task(role=AssistanceRole.ASSIST, peer='offer', self_name='assist'))
+        offer = AssistanceLink(self.make_task(role=AssistanceRole.OFFERING, peer='assist'))
+        self.assertIsNone(offer.peer_rest_until())
+        until = datetime.now().replace(microsecond=0) + timedelta(minutes=100)
+        assist.mark_rest(until)
+        self.assertEqual(offer.peer_rest_until(), until)
+        task = SimpleNamespace(set_next_run=Mock(), finish_task=Mock())
+        with self.assertRaises(TaskEnd):
+            _defer_while_peer_rests(task, offer)
+        task.set_next_run.assert_called_once_with(task='MetaDemon', target=until + timedelta(minutes=1))
+        # 协助端回到超鬼王后清除；过期的记录也不再拦截。
+        assist.clear_rest()
+        self.assertIsNone(offer.peer_rest_until())
+        assist.mark_rest(datetime.now() - timedelta(minutes=1))
+        self.assertIsNone(offer.peer_rest_until())
+        _defer_while_peer_rests(task, offer)
+
     def test_offering_star_order_is_custom(self):
         from tasks.MetaDemon.config import BossType, MetaDemonAssistanceConfig, OfferingStar
         B = BossType

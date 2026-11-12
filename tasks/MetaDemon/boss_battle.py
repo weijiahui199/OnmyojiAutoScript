@@ -285,7 +285,12 @@ class BossBattle(GeneralBattle, SwitchSoul, QuickLoadout, GameUi, MetaDemonAsset
         current, remain, total = self.O_MD_FATIGUE.ocr_digit_counter(self.device.image)
         # 不喝茶且当前疲劳度已满
         if not self.conf.meta_demon_config.auto_tea and (current > total or remain < 0):
-            self.set_next_run('MetaDemon', target=datetime.now() + self.conf.scheduler.wait_interval)
+            until = datetime.now() + self.conf.scheduler.wait_interval
+            self.set_next_run('MetaDemon', target=until)
+            # 鬼王协助的协助端：通知上供端等待疲劳恢复。
+            callback = getattr(self, 'on_fatigue_full', None)
+            if callback is not None:
+                callback(until)
             self.finish_task()
         return True
 

@@ -2,6 +2,7 @@
 from base64 import b64decode, b64encode
 import re
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from uuid import uuid4
 
@@ -122,6 +123,36 @@ class AssistanceLink:
     def peer_settled(self):
         state = self.runtime.peer_battle_state(self.CHANNEL, self.peer)
         return bool(state and state['session'] == self.session and state['payload'].get('settled'))
+
+    REST_TABLE = 'meta_demon_assist_rest'
+
+    @contextmanager
+    def _rest_db(self):
+        with self.runtime.connect() as conn:
+            conn.execute(f'CREATE TABLE IF NOT EXISTS {self.REST_TABLE} (name TEXT PRIMARY KEY, until TEXT)')
+            yield conn
+
+    def mark_rest(self, until):
+        """协助端疲劳度满、离开超鬼王休息：记下回来的时间，上供端到时再上供。"""
+        with self._rest_db() as conn:
+            conn.execute(f'INSERT OR REPLACE INTO {self.REST_TABLE} VALUES (?, ?)',
+                         (self.runtime.name, until.strftime('%Y-%m-%d %H:%M:%S')))
+        logger.info(f'协助端疲劳度已满，休息到 {until:%H:%M:%S}，上供端届时再继续')
+
+    def clear_rest(self):
+        with self._rest_db() as conn:
+            conn.execute(f'DELETE FROM {self.REST_TABLE} WHERE name=?', (self.runtime.name,))
+
+    def peer_rest_until(self):
+        """上供端：协助端还在因疲劳休息时返回它回来的时间，否则返回 None。"""
+        if not self.peer:
+            return None
+        with self._rest_db() as conn:
+            row = conn.execute(f'SELECT until FROM {self.REST_TABLE} WHERE name=?', (self.peer,)).fetchone()
+        if not row:
+            return None
+        until = datetime.strptime(row[0], '%Y-%m-%d %H:%M:%S')
+        return until if until > datetime.now() else None
 
     def peer_in_task(self):
         return any(self.runtime.runner_task(peer) == 'MetaDemon' for peer in self.peers)
@@ -620,6 +651,9 @@ class GhostAssistant:
     HANDOFF_GRACE_SECONDS = 180
 
     def run(self):
+        # 回到超鬼王说明已经不再休息；之后疲劳度满时记录休息时间，让上供端等待。
+        self.link.clear_rest()
+        self.task.on_fatigue_full = self.link.mark_rest
         # 等待对端可能已超过截图缓存期限（3 秒），必须重新截图再判断页面。
         self.task.goto_page(pages.page_meta_demon_boss, skip_first_screenshot=False)
         waiting_logged = False
@@ -688,6 +722,8 @@ def run_assistance(task):
         link = AssistanceLink(task)
         if not link.peers and not offering:
             raise RequestHumanTakeover('鬼王协助需要关联对端脚本，以传送截图和确认分享')
+        if offering:
+            _defer_while_peer_rests(task, link)
         if offering and link.peer and link.runtime.runner_task(link.peer) != 'MetaDemon':
             # 协助端可能刚结束上一段协助，让它重新进入超鬼王。
             wake_script(link.peer)
@@ -715,11 +751,25 @@ def run_assistance(task):
             success = run_offering(task, link)
         finally:
             link.publish()
+        if not success:
+            _defer_while_peer_rests(task, link, finish=True)
         if relay:
             _finish_relay(task, settings.next_offering_script, success)
             return
     task.set_next_run(task='MetaDemon', success=success)
     task.finish_task()
+
+
+def _defer_while_peer_rests(task, link, finish=False):
+    """协助端因疲劳休息时，本号等它回来再上供，期间不去唤醒它。"""
+    until = link.peer_rest_until()
+    if until is None:
+        return
+    logger.info(f'协助端 {link.peer} 疲劳度已满，休息到 {until:%H:%M:%S}，本号到时再上供')
+    task.set_next_run(task='MetaDemon', target=until + timedelta(minutes=1))
+    if finish:
+        task.finish_task()
+    raise TaskEnd
 
 
 def _finish_relay(task, next_name, success):
