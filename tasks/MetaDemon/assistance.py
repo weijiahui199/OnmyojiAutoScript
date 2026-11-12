@@ -274,11 +274,21 @@ class GhostOffering:
         wanted = {self.normalize_name(name): name for name in self.settings.friends}
         if not wanted:
             return False
-        t.screenshot()
+        # 分享面板刚打开时列表还在滑入，只能识别到一两个名字；等两次识别结果一致再判断，
+        # 否则会误以为好友不在当前页而去滑动列表，短滑动还可能被当成点击误选好友。
+        rows, previous = {}, None
+        for _ in range(10):
+            t.screenshot()
+            if not t.appear(t.I_MD_INVITE_FRIENDS) or self.selected_count():
+                break
+            rows = self.friend_rows()
+            if rows and previous is not None and rows.keys() == previous.keys():
+                break
+            previous = rows
+            time.sleep(0.3)
         if not t.appear(t.I_MD_INVITE_FRIENDS) or self.selected_count():
             logger.warning('分享列表存在已有选择或已关闭，请清空好友选择后重试')
             return False
-        rows = self.friend_rows()
         # All recipients are already visible. Avoid moving away from their rows.
         if wanted.keys() <= rows.keys():
             for name in wanted:
@@ -448,10 +458,57 @@ class GhostOffering:
             self.shared_generation = None
             t.cur_boss_type = None
             self.unknown_reported = False
+            self.remember_summon(None)
             if not self.within_limit():
                 return True
         self.empty_frames = 0
-        return t.check_and_switch_ticket(sequence=self.stars) or t.State.done
+        summoned = t.check_and_switch_ticket(sequence=self.stars)
+        if summoned and t.cur_boss_type is not None:
+            self.remember_summon(t.cur_boss_type)
+        return summoned or t.State.done
+
+    # 鬼王召唤后约 20 分钟逃跑。
+    SUMMON_MEMORY_SECONDS = 20 * 60
+    SUMMON_TABLE = 'meta_demon_last_summon'
+
+    def _summon_db(self):
+        runtime = self.link.runtime
+        db = runtime.connect()
+        return runtime.name, db
+
+    def remember_summon(self, star):
+        """记录本号刚召唤的鬼王星级；上供中途失败重跑时，可以继续分享这只鬼王而不是等它逃跑。"""
+        if self.link is None or getattr(self.link, 'runtime', None) is None:
+            return
+        name, db = self._summon_db()
+        with db as conn:
+            conn.execute(f'CREATE TABLE IF NOT EXISTS {self.SUMMON_TABLE} '
+                         '(name TEXT PRIMARY KEY, star INTEGER, created REAL)')
+            if star is None:
+                conn.execute(f'DELETE FROM {self.SUMMON_TABLE} WHERE name=?', (name,))
+            else:
+                conn.execute(f'INSERT OR REPLACE INTO {self.SUMMON_TABLE} VALUES (?, ?, ?)',
+                             (name, int(star), time.time()))
+
+    def restore_summon(self):
+        """本次运行开始时页面上已有鬼王：若是本号 20 分钟内召唤的，恢复它的星级。"""
+        t = self.task
+        if t.cur_boss_type is not None or self.link is None or getattr(self.link, 'runtime', None) is None:
+            return
+        name, db = self._summon_db()
+        with db as conn:
+            conn.execute(f'CREATE TABLE IF NOT EXISTS {self.SUMMON_TABLE} '
+                         '(name TEXT PRIMARY KEY, star INTEGER, created REAL)')
+            row = conn.execute(f'SELECT star, created FROM {self.SUMMON_TABLE} WHERE name=?', (name,)).fetchone()
+        if not row or time.time() - row[1] > self.SUMMON_MEMORY_SECONDS:
+            return
+        try:
+            star = BossType(int(row[0]))
+        except ValueError:
+            return
+        t.cur_boss_type = star
+        t._boss_generation = getattr(t, '_boss_generation', 0) + 1
+        logger.info(f'页面已有鬼王：按本号 {int(time.time() - row[1])} 秒前的召唤记录视为{int(star)}星，继续分享')
 
 
 class GhostAssistant:
@@ -601,6 +658,7 @@ def run_offering(task, link, stars=None):
     # 等待协助端可能已超过截图缓存期限（3 秒），必须重新截图再判断页面。
     task.goto_page(pages.page_meta_demon_boss, skip_first_screenshot=False)
     offering = GhostOffering(task, link, stars=stars)
+    offering.restore_summon()
     success = True
     while offering.within_limit():
         if not link.peer_in_task():
@@ -644,7 +702,7 @@ def run_assistance(task):
     if not ready:
         if chain is not None:
             # 仍然轮到本号，稍后重试，不要等完整的失败间隔。
-            task.set_next_run(task='MetaDemon', target=datetime.now() + timedelta(minutes=5))
+            task.set_next_run(task='MetaDemon', target=datetime.now() + timedelta(minutes=OFFERING_RETRY_MINUTES))
         else:
             task.set_next_run(task='MetaDemon', success=False)
         if offering:
@@ -708,5 +766,10 @@ def _finish_offering_turn(task, chain, success):
         logger.info('轮流上供：本号本星级门票未用完，继续上供')
         task.set_next_run(task='MetaDemon', target=datetime.now())
     else:
-        task.set_next_run(task='MetaDemon', success=False)
+        # 仍是本号的回合，按失败间隔（默认一天）推迟会让整轮卡住；几分钟后重试。
+        logger.warning(f'轮流上供：本号上供未完成，{OFFERING_RETRY_MINUTES} 分钟后重试，回合保留')
+        task.set_next_run(task='MetaDemon', target=datetime.now() + timedelta(minutes=OFFERING_RETRY_MINUTES))
     task.finish_task()
+
+
+OFFERING_RETRY_MINUTES = 3

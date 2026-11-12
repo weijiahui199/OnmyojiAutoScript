@@ -58,7 +58,9 @@ class AssistanceChecks(unittest.TestCase):
             'settling': t.I_MD_SETTLING, 'reward': t.I_UI_REWARD,
             'panel': t.I_MD_INVITE_FRIENDS}.get(t.phase))
         t.O_MD_FRIENDS = SimpleNamespace(roi=(435, 179, 486, 351), detect_and_ocr=Mock())
-        t.I_MD_FRIEND_SELECTED = SimpleNamespace(match_all=Mock(return_value=[]))
+        selected = Mock(return_value=[])
+        # 代码用 NMS 去重后的 match_all_any 计数；两个名字指向同一个替身，方便测试设置返回值。
+        t.I_MD_FRIEND_SELECTED = SimpleNamespace(match_all=selected, match_all_any=selected)
         t.S_MD_SWIPE_FRIEND_UP = SimpleNamespace(roi_front=(784,398,55,20), roi_back=(792,340,56,23))
         return t
 
@@ -169,6 +171,50 @@ class AssistanceChecks(unittest.TestCase):
         self.assertEqual(offering.select_friend.call_count, 2)
         offering.list_to_top.assert_not_called()
         t.appear_then_click.assert_not_called()
+
+    def test_waits_for_sliding_panel_before_deciding_friend_is_off_screen(self):
+        # 面板刚滑入时只识别到一个名字，随后完整列表里能看到目标好友：不应滑动列表。
+        t = self.make_task(friend_names='Chipotle')
+        t.phase = 'panel'
+        offering = GhostOffering(t, StubLink())
+        offering.list_to_top = Mock(return_value=True)
+        full = {'如沐春雨': [(1, 2, 3, 4)], 'Chipotle': [(440, 189, 40, 20)], 'Waffle': [(5, 6, 7, 8)]}
+        calls = []
+        offering.friend_rows = Mock(side_effect=lambda: calls.append(1) or ({'丑子': [(9, 9, 9, 9)]} if len(calls) == 1 else full))
+        offering.select_friend = Mock(return_value=True)
+        with patch('tasks.MetaDemon.assistance.time.sleep'):
+            self.assertTrue(offering.select_friends())
+        offering.select_friend.assert_called_once_with('Chipotle', (440, 189, 40, 20))
+        offering.list_to_top.assert_not_called()
+        t.swipe.assert_not_called()
+
+    def test_summoned_star_is_restored_after_a_failed_run(self):
+        import tempfile
+        from pathlib import Path
+        from module.cooperation import Cooperation
+        with tempfile.TemporaryDirectory() as root:
+            link = SimpleNamespace(runtime=Cooperation('offer', root=Path(root)))
+            t = self.make_task()
+            GhostOffering(t, link).remember_summon(BossType.FIVE_STARS)
+            # 重新运行：页面上已有鬼王但星级未知。
+            t2 = self.make_task()
+            t2.cur_boss_type, t2._boss_generation = None, 0
+            GhostOffering(t2, link).restore_summon()
+            self.assertEqual(t2.cur_boss_type, BossType.FIVE_STARS)
+            self.assertEqual(t2._boss_generation, 1)
+            # 鬼王结束后清除记录，不会套到以后的鬼王上。
+            GhostOffering(t, link).remember_summon(None)
+            t3 = self.make_task()
+            t3.cur_boss_type = None
+            GhostOffering(t3, link).restore_summon()
+            self.assertIsNone(t3.cur_boss_type)
+            # 超过逃跑时间的记录不再使用。
+            GhostOffering(t, link).remember_summon(BossType.FIVE_STARS)
+            with patch('tasks.MetaDemon.assistance.time.time', return_value=__import__('time').time() + 21 * 60):
+                t4 = self.make_task()
+                t4.cur_boss_type = None
+                GhostOffering(t4, link).restore_summon()
+            self.assertIsNone(t4.cur_boss_type)
 
     def test_old_selections_are_not_sent_to_unconfigured_people(self):
         t = self.make_task()
