@@ -24,13 +24,19 @@ class AssistanceLink:
     def __init__(self, task):
         self.task = task
         settings = task.conf.assistance_config
+        self.assist = settings.role == AssistanceRole.ASSIST
         self.peer = settings.cooperation_script
         self.runtime = getattr(task.config, 'cooperation_runtime', None) or Cooperation(task.config.config_name)
         self.session = uuid4().hex
+        # 协助端可以同时服务多个上供端：逐个处理它们分享的鬼王。
+        self.current_peer = None
+        self.settled_sessions = set()
         other_role = AssistanceRole.ASSIST if settings.role == AssistanceRole.OFFERING else AssistanceRole.OFFERING
-        if not self.peer:
+        if self.peer:
+            self.peers = [self.peer]
+        else:
             peers = []
-            for path in (self.runtime.root / 'config').glob('*.json'):
+            for path in sorted((self.runtime.root / 'config').glob('*.json')):
                 if path.stem == self.runtime.name:
                     continue
                 other = self.runtime.read(path.stem).get('meta_demon', {})
@@ -39,16 +45,19 @@ class AssistanceLink:
                         and other_settings.get('role') == other_role
                         and other_settings.get('cooperation_script') == self.runtime.name):
                     peers.append(path.stem)
-            if len(peers) > 1:
+            if len(peers) > 1 and not self.assist:
                 raise ScriptError('有多个鬼王协助脚本指向当前实例，请明确填写协同脚本')
+            self.peers = peers
             self.peer = next(iter(peers), '')
-        if self.peer:
-            other = self.runtime.read(self.peer).get('meta_demon', {})
+        for peer in self.peers:
+            other = self.runtime.read(peer).get('meta_demon', {})
             other_settings = other.get('assistance_config', {})
-            if (self.peer == self.runtime.name or other_settings.get('role') != other_role
+            if (peer == self.runtime.name or other_settings.get('role') != other_role
                     or MetaDemonMode.BOSS_ASSIST not in other.get('meta_demon_config', {}).get('mode', [])
                     or other_settings.get('cooperation_script', '') not in ('', self.runtime.name)):
                 raise ScriptError('鬼王协同脚本应为匹配的上供和协助实例')
+        if len(self.peers) > 1:
+            logger.info(f'鬼王协助关联多个上供端：{self.peers}')
 
     def publish(self, portrait='', star=None):
         if self.peer:
@@ -65,7 +74,7 @@ class AssistanceLink:
 
     def target_star(self, target):
         """读取上供端随鬼王截图一起同步的星级。"""
-        state = self.runtime.peer_battle_state(self.CHANNEL, self.peer)
+        state = self.runtime.peer_battle_state(self.CHANNEL, target[3])
         if not state or state['session'] != target[0]:
             return None
         try:
@@ -73,20 +82,38 @@ class AssistanceLink:
         except (TypeError, ValueError):
             return None
 
-    def target(self):
-        state = self.runtime.peer_battle_state(self.CHANNEL, self.peer)
-        if not state:
+    def _peer_target(self, peer):
+        state = self.runtime.peer_battle_state(self.CHANNEL, peer)
+        if not state or state['session'] in self.settled_sessions:
             return None
         payload = state['payload']
         portrait = payload.get('portrait')
         if portrait and payload.get('expires', 0) > time.time():
-            return state['session'], state['updated'], portrait
+            return state['session'], state['updated'], portrait, peer
         return None
 
+    def target(self):
+        """当前要协助的鬼王；正在处理的上供端优先，否则取最早分享的那只。"""
+        if self.current_peer:
+            current = self._peer_target(self.current_peer)
+            if current:
+                return current
+            self.current_peer = None
+        candidates = [item for item in map(self._peer_target, self.peers) if item]
+        if not candidates:
+            return None
+        chosen = min(candidates, key=lambda item: item[1])
+        self.current_peer = chosen[3]
+        if len(self.peers) > 1:
+            logger.info(f'协助切换到上供端：{chosen[3]}')
+        return chosen
+
     def confirm(self, target, *, settled=False):
-        self.runtime.publish_battle_state(self.CHANNEL, self.peer, target[0], {
+        self.runtime.publish_battle_state(self.CHANNEL, target[3], target[0], {
             'matched': True, 'settled': settled,
         })
+        if settled:
+            self.settled_sessions.add(target[0])
 
     def confirmed(self):
         state = self.runtime.peer_battle_state(self.CHANNEL, self.peer)
@@ -97,9 +124,11 @@ class AssistanceLink:
         return bool(state and state['session'] == self.session and state['payload'].get('settled'))
 
     def peer_in_task(self):
-        return self.runtime.runner_task(self.peer) == 'MetaDemon'
+        return any(self.runtime.runner_task(peer) == 'MetaDemon' for peer in self.peers)
 
     def wait_for_peer(self):
+        if len(self.peers) > 1:
+            return self._wait_for_any_peer()
         task = 'MetaDemon'
         if not self.runtime.prepare(self.task.config, task, self.peer, defer=False):
             return False
@@ -113,6 +142,31 @@ class AssistanceLink:
             time.sleep(0.5)
         self.runtime.skip_without_wake(task, self.peer, '对端未进入超鬼王协同任务')
         logger.info(f'超鬼王协同跳过：{self.peer} 未进入同一任务')
+        return False
+
+    def _wait_for_any_peer(self):
+        """协助端关联多个上供端：唤醒在线的上供端，任意一个进入超鬼王即可开始。"""
+        task = 'MetaDemon'
+        for peer in self.peers:
+            # 没有心跳的实例不等待，避免逐个等 30 秒。
+            if self.runtime.runner_task(peer) is None:
+                logger.info(f'超鬼王协同：{peer} 未运行，跳过')
+                continue
+            try:
+                self.runtime.prepare(self.task.config, task, peer, defer=False)
+            except ScriptError as exc:
+                logger.info(f'超鬼王协同：{peer} 配置不匹配，跳过：{exc}')
+        # prepare 在对端忙碌时会留下本实例的等待记录，会让对端随后加入时误判为忙碌。
+        with self.runtime.connect() as db:
+            db.execute('DELETE FROM waiting WHERE name=? AND task=?', (self.runtime.name, task))
+        deadline = time.monotonic() + min(30, self.task.limit_time.total_seconds())
+        while time.monotonic() < deadline:
+            if self.peer_in_task():
+                return True
+            time.sleep(0.5)
+        for peer in self.peers:
+            self.runtime.skip_without_wake(task, peer, '对端未进入超鬼王协同任务')
+        logger.info(f'超鬼王协同跳过：{self.peers} 均未进入同一任务')
         return False
 
 
@@ -552,7 +606,7 @@ def run_assistance(task):
     task.before_run()
     try:
         link = AssistanceLink(task)
-        if not link.peer and not offering:
+        if not link.peers and not offering:
             raise RequestHumanTakeover('鬼王协助需要关联对端脚本，以传送截图和确认分享')
         ready = bool(link.peer and link.wait_for_peer())
     except ScriptError as exc:

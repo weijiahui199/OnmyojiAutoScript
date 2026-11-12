@@ -215,7 +215,7 @@ class AssistanceChecks(unittest.TestCase):
     def test_assist_without_peer_requests_human_takeover(self):
         t = self.make_task(role=AssistanceRole.ASSIST)
         with patch('tasks.MetaDemon.assistance.AssistanceLink') as link_class:
-            link_class.return_value = SimpleNamespace(peer='')
+            link_class.return_value = SimpleNamespace(peer='', peers=[])
             with self.assertRaises(RequestHumanTakeover):
                 run_assistance(t)
         t.before_run.assert_called_once()

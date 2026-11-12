@@ -199,6 +199,45 @@ class AssistanceLinkChecks(unittest.TestCase):
         self.assertEqual(peer['payload']['portrait'], 'portrait-b64')
         self.assertFalse(link.confirmed())
 
+    def test_assist_serves_multiple_offering_peers_in_turn(self):
+        for name in ('offer_a', 'offer_b'):
+            write_config(self.root, name, role=AssistanceRole.OFFERING, peer='assist')
+        write_config(self.root, 'assist', role=AssistanceRole.ASSIST)
+        task = self.make_task(role=AssistanceRole.ASSIST, peer='', self_name='assist')
+        link = AssistanceLink(task)
+        self.assertEqual(link.peers, ['offer_a', 'offer_b'])
+        self.assertIsNone(link.target())
+
+        def offer(name, portrait, star):
+            offer_task = self.make_task(role=AssistanceRole.OFFERING, peer='assist', self_name=name)
+            offer_link = AssistanceLink(offer_task)
+            offer_link.publish(portrait, star=star)
+            return offer_link
+
+        link_b = offer('offer_b', 'portrait-b', 5)
+        link_a = offer('offer_a', 'portrait-a', 4)
+        # 最早分享的上供端优先，且处理期间保持不变。
+        first = link.target()
+        self.assertEqual((first[2], first[3]), ('portrait-b', 'offer_b'))
+        self.assertEqual(int(link.target_star(first)), 5)
+        self.assertEqual(link.target(), first)
+        link.confirm(first)
+        self.assertTrue(link_b.confirmed())
+        self.assertFalse(link_a.confirmed())
+        # 结算后切到下一个上供端。
+        link.confirm(first, settled=True)
+        self.assertTrue(link_b.peer_settled())
+        second = link.target()
+        self.assertEqual((second[2], second[3]), ('portrait-a', 'offer_a'))
+        self.assertEqual(int(link.target_star(second)), 4)
+
+    def test_offering_star_order_is_five_four_six(self):
+        from tasks.MetaDemon.config import BossType, OfferingStar
+        self.assertEqual(OfferingStar.FOUR_PLUS.stars,
+                         (BossType.FIVE_STARS, BossType.FOUR_STARS, BossType.SIX_STARS))
+        self.assertEqual(OfferingStar.FIVE_PLUS.stars, (BossType.FIVE_STARS, BossType.SIX_STARS))
+        self.assertEqual(OfferingStar.SIX.stars, (BossType.SIX_STARS,))
+
 
 class GhostAssistantChecks(unittest.TestCase):
     def make_task(self):

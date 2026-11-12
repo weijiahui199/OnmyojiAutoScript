@@ -46,8 +46,8 @@ class OfferingStar(str, Enum):
 
     @property
     def stars(self) -> tuple[BossType, ...]:
-        """满足下限的星级，按高星优先排列。"""
-        return tuple(star for star in (BossType.SIX_STARS, BossType.FIVE_STARS, BossType.FOUR_STARS)
+        """满足下限的星级，按召唤优先级排列：五星、四星、六星。"""
+        return tuple(star for star in (BossType.FIVE_STARS, BossType.FOUR_STARS, BossType.SIX_STARS)
                      if star >= self.floor)
 
 
@@ -229,7 +229,7 @@ class MetaDemonAssistanceConfig(ConfigBase):
     role: AssistanceRole = Field(default=AssistanceRole.OFFERING, title='鬼王协助身份',
         description='上供召唤鬼王并分享；协助从超鬼王主页寻找好友分享的鬼王并挑战。')
     offering_star: OfferingStar = Field(default=OfferingStar.SIX, title='上供鬼王星级',
-        description='上供端召唤并分享的鬼王星级：四星及以上 / 五星及以上 / 六星，按高星优先召唤。')
+        description='上供端召唤并分享的鬼王星级：四星及以上 / 五星及以上 / 六星，按五星、四星、六星的顺序优先召唤。')
     friend_names: str = Field(default='', title='分享好友名字',
         description='填写游戏内好友完整名字；多个名字用分号或换行分隔，按名称精确匹配，不使用近似名字。')
     poll_interval: int = Field(default=5, ge=2, le=60, title='协助轮询间隔（秒）',
