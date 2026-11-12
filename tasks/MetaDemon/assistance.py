@@ -564,7 +564,8 @@ class GhostAssistant:
     HANDOFF_GRACE_SECONDS = 180
 
     def run(self):
-        self.task.goto_page(pages.page_meta_demon_boss)
+        # 等待对端可能已超过截图缓存期限（3 秒），必须重新截图再判断页面。
+        self.task.goto_page(pages.page_meta_demon_boss, skip_first_screenshot=False)
         waiting_logged = False
         grace = self.HANDOFF_GRACE_SECONDS if len(self.link.peers) > 1 else 0
         idle_since = None
@@ -597,7 +598,8 @@ class GhostAssistant:
 
 
 def run_offering(task, link, stars=None):
-    task.goto_page(pages.page_meta_demon_boss)
+    # 等待协助端可能已超过截图缓存期限（3 秒），必须重新截图再判断页面。
+    task.goto_page(pages.page_meta_demon_boss, skip_first_screenshot=False)
     offering = GhostOffering(task, link, stars=stars)
     success = True
     while offering.within_limit():
