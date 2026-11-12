@@ -1,3 +1,4 @@
+import re
 from typing import ClassVar
 from tasks.Component.config_settings_layout import SettingsLayoutConfig, settings_section
 # This Python file uses the following encoding: utf-8
@@ -46,9 +47,24 @@ class OfferingStar(str, Enum):
 
     @property
     def stars(self) -> tuple[BossType, ...]:
-        """满足下限的星级，按召唤优先级排列：五星、四星、六星。"""
-        return tuple(star for star in (BossType.FIVE_STARS, BossType.FOUR_STARS, BossType.SIX_STARS)
-                     if star >= self.floor)
+        """旧的下拉选项对应的召唤顺序。"""
+        return parse_offering_stars(LEGACY_OFFERING_ORDER[self])
+
+
+# 旧版「上供鬼王星级」下拉值 → 召唤顺序
+LEGACY_OFFERING_ORDER = {
+    OfferingStar.FOUR_PLUS: '5,4,6',
+    OfferingStar.FIVE_PLUS: '5,6',
+    OfferingStar.SIX: '6',
+}
+DEFAULT_OFFERING_ORDER = '6'
+
+
+def parse_offering_stars(value) -> tuple[BossType, ...]:
+    """把「6,5,4」这样的文字解析成召唤顺序；只认 4、5、6 星，重复的只保留第一次。"""
+    text = LEGACY_OFFERING_ORDER.get(str(value or '').strip(), str(value or ''))
+    stars = (BossType(int(digit)) for digit in re.findall(r'[4-6]', text))
+    return tuple(dict.fromkeys(stars))
 
 
 class MetaDemonConfig(ConfigBase):
@@ -228,15 +244,26 @@ class MetaDemonAssistanceConfig(ConfigBase):
         description='关联另一端的本地脚本。协助者接收上供端的鬼王截图，并在好友列表中匹配后挑战。')
     role: AssistanceRole = Field(default=AssistanceRole.OFFERING, title='鬼王协助身份',
         description='上供召唤鬼王并分享；协助从超鬼王主页寻找好友分享的鬼王并挑战。')
-    offering_star: OfferingStar = Field(default=OfferingStar.SIX, title='上供鬼王星级',
-        description='上供端召唤并分享的鬼王星级：四星及以上 / 五星及以上 / 六星，按五星、四星、六星的顺序优先召唤。')
+    offering_star: str = Field(default=DEFAULT_OFFERING_ORDER, title='上供鬼王星级顺序',
+        description='上供端召唤并分享的鬼王星级和顺序，用逗号分隔，例如 6,5,4 表示先用六星门票，用完再五星、四星；'
+                    '只写 6 表示只打六星。只支持 4、5、6 星。')
     friend_names: str = Field(default='', title='分享好友名字',
         description='填写游戏内好友完整名字；多个名字用分号或换行分隔，按名称精确匹配，不使用近似名字。')
     poll_interval: int = Field(default=5, ge=2, le=60, title='协助轮询间隔（秒）',
         description='上供按此间隔检查是否已击杀，协助按此间隔重新寻找好友分享。')
     offering_order: str = Field(default='', title='上供顺序',
-        description='仅协助端填写。多个上供脚本名用分号分隔，按此顺序一个一个上供：每轮只召唤一个星级（按协助端「上供鬼王星级」的顺序），'
+        description='仅协助端填写。多个上供脚本名用分号分隔，按此顺序一个一个上供：每轮只召唤一个星级（按协助端「上供鬼王星级顺序」），'
                     '当前号该星级门票用完后自动让下一个号开始，全部轮完再从第一个号上供下一个星级。留空则各上供号按自己的调度同时上供。')
+
+    @field_validator('offering_star', mode='before')
+    @classmethod
+    def normalize_offering_star(cls, value) -> str:
+        stars = parse_offering_stars(value)
+        return ','.join(str(int(star)) for star in stars) if stars else DEFAULT_OFFERING_ORDER
+
+    @property
+    def offering_stars(self) -> tuple[BossType, ...]:
+        return parse_offering_stars(self.offering_star) or parse_offering_stars(DEFAULT_OFFERING_ORDER)
 
     @field_validator('cooperation_script')
     @classmethod

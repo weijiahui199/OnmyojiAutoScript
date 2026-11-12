@@ -1185,7 +1185,7 @@
     "assistance_config": {
       "cooperation_script": "",
       "role": "上供",
-      "offering_star": "六星",
+      "offering_star": "6",
       "friend_names": "",
       "poll_interval": 5
     },

@@ -179,8 +179,8 @@ class GhostOffering:
         self.task = task
         self.link = link
         self.settings = task.conf.assistance_config
-        # 轮流上供时只召唤本轮的星级；否则按「上供鬼王星级」。
-        self.stars = tuple(stars) if stars else self.settings.offering_star.stars
+        # 轮流上供时只召唤本轮的星级；否则按「上供鬼王星级顺序」。
+        self.stars = tuple(stars) if stars else self.settings.offering_stars
         self.stars_text = '/'.join(f'{int(star)}星' for star in self.stars)
         self.shared_generation = None
         self.waiting = False
@@ -559,7 +559,7 @@ class GhostAssistant:
         t = self.task
         if self.active_target != target:
             t.cur_boss_type = (self.link.target_star(target)
-                               or t.conf.assistance_config.offering_star.floor)
+                               or min(t.conf.assistance_config.offering_stars))
             t._boss_generation += 1
             t._current_boss_attempts = 0
             self.active_target = target

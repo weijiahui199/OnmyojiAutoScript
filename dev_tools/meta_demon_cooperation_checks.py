@@ -272,12 +272,18 @@ class AssistanceLinkChecks(unittest.TestCase):
         task = self.make_task(role=AssistanceRole.OFFERING, peer='assist', self_name='a')
         self.assertIsNone(OfferingChain.load(task, task.config.cooperation_runtime))
 
-    def test_offering_star_order_is_five_four_six(self):
-        from tasks.MetaDemon.config import BossType, OfferingStar
-        self.assertEqual(OfferingStar.FOUR_PLUS.stars,
-                         (BossType.FIVE_STARS, BossType.FOUR_STARS, BossType.SIX_STARS))
-        self.assertEqual(OfferingStar.FIVE_PLUS.stars, (BossType.FIVE_STARS, BossType.SIX_STARS))
-        self.assertEqual(OfferingStar.SIX.stars, (BossType.SIX_STARS,))
+    def test_offering_star_order_is_custom(self):
+        from tasks.MetaDemon.config import BossType, MetaDemonAssistanceConfig, OfferingStar
+        B = BossType
+        self.assertEqual(OfferingStar.FOUR_PLUS.stars, (B.FIVE_STARS, B.FOUR_STARS, B.SIX_STARS))
+        self.assertEqual(OfferingStar.SIX.stars, (B.SIX_STARS,))
+        cases = {'6,5,4': '6,5,4', '4，5；6': '4,5,6', '6 6 5': '6,5', '六星': '6',
+                 '四星及以上': '5,4,6', '': '6', '1,2,3': '6'}
+        for raw, expected in cases.items():
+            conf = MetaDemonAssistanceConfig(offering_star=raw)
+            self.assertEqual(conf.offering_star, expected, raw)
+        self.assertEqual(MetaDemonAssistanceConfig(offering_star='6,5,4').offering_stars,
+                         (B.SIX_STARS, B.FIVE_STARS, B.FOUR_STARS))
 
 
 class GhostAssistantChecks(unittest.TestCase):

@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 
 from module.logger import logger
-from tasks.MetaDemon.config import AssistanceRole, BossType, OfferingStar
+from tasks.MetaDemon.config import AssistanceRole, BossType, parse_offering_stars
 
 # 轮到的号超过这么久没有动静，视为上一轮已中断，重新从第一个号开始。
 STALE_SECONDS = 6 * 3600
@@ -43,10 +43,7 @@ class OfferingChain:
         order = parse_order(assist_settings.get('offering_order', ''))
         if runtime.name not in order:
             return None
-        try:
-            phases = OfferingStar(assist_settings.get('offering_star')).stars
-        except ValueError:
-            phases = settings.offering_star.stars
+        phases = parse_offering_stars(assist_settings.get('offering_star')) or settings.offering_stars
         return cls(runtime, assist, order, phases)
 
     def _row(self, db):
