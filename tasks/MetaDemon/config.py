@@ -251,9 +251,9 @@ class MetaDemonAssistanceConfig(ConfigBase):
         description='填写游戏内好友完整名字；多个名字用分号或换行分隔，按名称精确匹配，不使用近似名字。')
     poll_interval: int = Field(default=5, ge=2, le=60, title='协助轮询间隔（秒）',
         description='上供按此间隔检查是否已击杀，协助按此间隔重新寻找好友分享。')
-    offering_order: str = Field(default='', title='上供顺序',
-        description='仅协助端填写。多个上供脚本名用分号分隔，按此顺序一个一个上供：每轮只召唤一个星级（按协助端「上供鬼王星级顺序」），'
-                    '当前号该星级门票用完后自动让下一个号开始，全部轮完再从第一个号上供下一个星级。留空则各上供号按自己的调度同时上供。')
+    next_offering_script: str = Field(default='', title='下一个上供脚本',
+        description='仅上供端填写。本号按「上供鬼王星级顺序」把这些星级的门票都用完后，把这个脚本的超鬼王运行时间设为现在，'
+                    '让它接着上供；本号上供中途失败时 3 分钟后重试。留空则不唤醒。不要首尾相连，否则会一直互相唤醒。')
 
     @field_validator('offering_star', mode='before')
     @classmethod
@@ -265,7 +265,7 @@ class MetaDemonAssistanceConfig(ConfigBase):
     def offering_stars(self) -> tuple[BossType, ...]:
         return parse_offering_stars(self.offering_star) or parse_offering_stars(DEFAULT_OFFERING_ORDER)
 
-    @field_validator('cooperation_script')
+    @field_validator('cooperation_script', 'next_offering_script')
     @classmethod
     def validate_cooperation_script(cls, value: str) -> str:
         return instance_name(value)

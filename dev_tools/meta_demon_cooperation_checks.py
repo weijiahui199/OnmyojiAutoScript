@@ -231,46 +231,40 @@ class AssistanceLinkChecks(unittest.TestCase):
         self.assertEqual((second[2], second[3]), ('portrait-a', 'offer_a'))
         self.assertEqual(int(link.target_star(second)), 4)
 
-    def test_offering_chain_rotates_accounts_then_stars(self):
-        from tasks.MetaDemon.config import BossType
-        from tasks.MetaDemon.offering_chain import OfferingChain
-        write_config(self.root, 'assist', role=AssistanceRole.ASSIST,
-                     offering_order='a;b;off;c', offering_star='四星及以上')
-        for name in ('a', 'b', 'c'):
-            write_config(self.root, name, role=AssistanceRole.OFFERING, peer='assist')
-        # 顺序里的 off 没启用超鬼王，轮到时要跳过。
-        write_config(self.root, 'off', role=AssistanceRole.OFFERING, peer='assist', enable=False)
+    def relay_task(self, *, done=True, elapsed=0, count=0):
+        from datetime import datetime, timedelta
+        return SimpleNamespace(
+            config=SimpleNamespace(config_name='a'), State=SimpleNamespace(done=done),
+            start_time=datetime.now() - timedelta(minutes=elapsed), limit_time=timedelta(minutes=30),
+            total_count=count, limit_count=50, set_next_run=Mock(), finish_task=Mock())
 
-        def chain(name):
-            task = self.make_task(role=AssistanceRole.OFFERING, peer='assist', self_name=name)
-            return OfferingChain.load(task, task.config.cooperation_runtime)
+    def test_relay_wakes_next_script_only_when_tickets_are_used_up(self):
+        from tasks.MetaDemon.assistance import _finish_relay
+        with patch('tasks.MetaDemon.assistance.wake_script') as wake:
+            task = self.relay_task()
+            _finish_relay(task, 'b', True)
+            wake.assert_called_once_with('b')
+            task.set_next_run.assert_called_once_with(task='MetaDemon', success=True)
+            # 到运行时间上限但门票没用完：不唤醒，马上继续。
+            wake.reset_mock()
+            task = self.relay_task(done=False, elapsed=31)
+            _finish_relay(task, 'b', True)
+            wake.assert_not_called()
+            self.assertIn('target', task.set_next_run.call_args.kwargs)
+            # 失败：不唤醒，几分钟后重试。
+            task = self.relay_task()
+            _finish_relay(task, 'b', False)
+            wake.assert_not_called()
+            self.assertIn('target', task.set_next_run.call_args.kwargs)
+            # 下一个是自己：不唤醒。
+            task = self.relay_task()
+            _finish_relay(task, 'a', True)
+            wake.assert_not_called()
 
-        a, b, c = chain('a'), chain('b'), chain('c')
-        self.assertEqual(a.phases, (BossType.FIVE_STARS, BossType.FOUR_STARS, BossType.SIX_STARS))
-        # 没开始时只有第一个号能开始新一轮。
-        self.assertIsNone(b.my_star())
-        self.assertEqual(a.my_star(), BossType.FIVE_STARS)
-        self.assertIsNone(b.my_star())
-        self.assertIsNone(b.advance())  # 没轮到的号不能交接
-        turns = []
-        for _ in range(9):
-            current = {'a': a, 'b': b, 'c': c}[a.state()['turn']]
-            turns.append((current.name, int(current.my_star())))
-            current.advance()
-        self.assertEqual(turns, [('a', 5), ('b', 5), ('c', 5), ('a', 4), ('b', 4), ('c', 4),
-                                 ('a', 6), ('b', 6), ('c', 6)])
-        self.assertEqual(a.state()['turn'], '')
-        self.assertIsNone(c.my_star())
-        self.assertEqual(a.my_star(), BossType.FIVE_STARS)  # 新一轮
-
-    def test_offering_chain_ignores_accounts_outside_order(self):
-        from tasks.MetaDemon.offering_chain import OfferingChain
-        write_config(self.root, 'assist', role=AssistanceRole.ASSIST, offering_order='a')
-        task = self.make_task(role=AssistanceRole.OFFERING, peer='assist', self_name='z')
-        self.assertIsNone(OfferingChain.load(task, task.config.cooperation_runtime))
-        write_config(self.root, 'assist', role=AssistanceRole.ASSIST)
-        task = self.make_task(role=AssistanceRole.OFFERING, peer='assist', self_name='a')
-        self.assertIsNone(OfferingChain.load(task, task.config.cooperation_runtime))
+    def test_next_offering_script_is_normalized(self):
+        from tasks.MetaDemon.config import MetaDemonAssistanceConfig
+        self.assertEqual(MetaDemonAssistanceConfig(next_offering_script=' b ').next_offering_script, 'b')
+        self.assertEqual(MetaDemonAssistanceConfig().next_offering_script, '')
 
     def test_offering_star_order_is_custom(self):
         from tasks.MetaDemon.config import BossType, MetaDemonAssistanceConfig, OfferingStar

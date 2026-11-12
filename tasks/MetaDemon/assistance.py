@@ -179,7 +179,6 @@ class GhostOffering:
         self.task = task
         self.link = link
         self.settings = task.conf.assistance_config
-        # 轮流上供时只召唤本轮的星级；否则按「上供鬼王星级顺序」。
         self.stars = tuple(stars) if stars else self.settings.offering_stars
         self.stars_text = '/'.join(f'{int(star)}星' for star in self.stars)
         self.shared_generation = None
@@ -683,16 +682,15 @@ def run_assistance(task):
     if offering and not settings.friends:
         raise RequestHumanTakeover('鬼王上供需要填写分享好友名字')
     task.before_run()
-    chain, chain_stars = None, None
-    if offering:
-        chain, chain_stars = _offering_turn(task)
+    # 填了「下一个上供脚本」：本号门票用完后唤醒它，中途失败时几分钟后重试，不按失败间隔推到第二天。
+    relay = offering and bool(settings.next_offering_script)
     try:
         link = AssistanceLink(task)
         if not link.peers and not offering:
             raise RequestHumanTakeover('鬼王协助需要关联对端脚本，以传送截图和确认分享')
-        if chain is not None and link.runtime.runner_task(chain.assist) != 'MetaDemon':
-            # 轮到本号时协助端可能刚结束上一段协助，让它重新进入超鬼王。
-            chain.wake(chain.assist)
+        if offering and link.peer and link.runtime.runner_task(link.peer) != 'MetaDemon':
+            # 协助端可能刚结束上一段协助，让它重新进入超鬼王。
+            wake_script(link.peer)
         ready = bool(link.peer and link.wait_for_peer())
     except ScriptError as exc:
         if not offering:
@@ -700,8 +698,7 @@ def run_assistance(task):
         logger.info(f'鬼王上供协同未匹配：{exc}')
         ready = False
     if not ready:
-        if chain is not None:
-            # 仍然轮到本号，稍后重试，不要等完整的失败间隔。
+        if relay:
             task.set_next_run(task='MetaDemon', target=datetime.now() + timedelta(minutes=OFFERING_RETRY_MINUTES))
         else:
             task.set_next_run(task='MetaDemon', success=False)
@@ -715,61 +712,45 @@ def run_assistance(task):
     else:
         link.publish()
         try:
-            success = run_offering(task, link, stars=chain_stars)
+            success = run_offering(task, link)
         finally:
             link.publish()
-        if chain is not None:
-            _finish_offering_turn(task, chain, success)
+        if relay:
+            _finish_relay(task, settings.next_offering_script, success)
             return
     task.set_next_run(task='MetaDemon', success=success)
     task.finish_task()
 
 
-def _offering_turn(task):
-    """轮流上供：返回 (轮流状态, 本号本轮星级)；没轮到本号时直接结束本次任务。"""
-    from tasks.MetaDemon.offering_chain import OfferingChain
-    if not task.config.meta_demon.assistance_config.cooperation_script:
-        return None, None
-    runtime = getattr(task.config, 'cooperation_runtime', None) or Cooperation(task.config.config_name)
-    try:
-        chain = OfferingChain.load(task, runtime)
-    except ScriptError as exc:
-        logger.warning(f'轮流上供配置读取失败，按普通上供处理：{exc}')
-        return None, None
-    if chain is None:
-        return None, None
-    star = chain.my_star()
-    if star is None:
-        state = chain.state() or {}
-        logger.info(f'轮流上供：当前轮到 {state.get("turn") or "（未开始）"}，本号不上供')
-        task.set_next_run(task='MetaDemon', success=True)
-        raise TaskEnd
-    logger.info(f'轮流上供：轮到本号，上供{int(star)}星')
-    return chain, (star,)
-
-
-def _finish_offering_turn(task, chain, success):
+def _finish_relay(task, next_name, success):
     in_limit = (datetime.now() - task.start_time < task.limit_time and task.total_count < task.limit_count)
     if success and task.State.done and in_limit:
-        # 本星级门票已用完：交给下一个号。
-        next_name = chain.advance()
-        if next_name and next_name != chain.name:
-            chain.wake(next_name)
-        elif next_name == chain.name:
-            # 顺序里只剩本号可用，直接接着上供下一个星级。
-            task.set_next_run(task='MetaDemon', target=datetime.now())
-            task.finish_task()
-            return
+        logger.info(f'本号门票已按顺序用完，唤醒下一个上供脚本 {next_name}')
+        if next_name != task.config.config_name:
+            wake_script(next_name)
         task.set_next_run(task='MetaDemon', success=True)
     elif success:
-        # 运行时间或次数到上限但门票还没用完：仍是本号的回合，马上继续。
-        logger.info('轮流上供：本号本星级门票未用完，继续上供')
+        # 运行时间或次数到上限但门票还没用完：马上继续。
+        logger.info('本号门票未用完，继续上供')
         task.set_next_run(task='MetaDemon', target=datetime.now())
     else:
-        # 仍是本号的回合，按失败间隔（默认一天）推迟会让整轮卡住；几分钟后重试。
-        logger.warning(f'轮流上供：本号上供未完成，{OFFERING_RETRY_MINUTES} 分钟后重试，回合保留')
+        logger.warning(f'本号上供未完成，{OFFERING_RETRY_MINUTES} 分钟后重试')
         task.set_next_run(task='MetaDemon', target=datetime.now() + timedelta(minutes=OFFERING_RETRY_MINUTES))
     task.finish_task()
+
+
+def wake_script(name: str) -> None:
+    """把另一个实例的超鬼王运行时间设为现在；对方空闲时会在几秒内重新读取配置并开始。"""
+    from pathlib import Path
+    from module.config.config_model import ConfigModel
+    # ConfigModel 找不到文件时会用默认值新建一个配置，必须先确认文件存在。
+    if not (Path.cwd() / 'config' / f'{name}.json').is_file():
+        logger.warning(f'找不到配置 {name}，无法设置超鬼王运行时间')
+        return
+    model = ConfigModel(config_name=name)
+    model.meta_demon.scheduler.next_run = datetime.now().replace(microsecond=0)
+    model.save()
+    logger.info(f'已把 {name} 的超鬼王运行时间设为现在')
 
 
 OFFERING_RETRY_MINUTES = 3
