@@ -14,6 +14,7 @@
   "role": "Role",
   "friend_names": "Friends to share with",
   "poll_interval": "Assist poll interval (seconds)",
+  "offering_order": "Offering order",
   "cooperation_script": "Cooperation script",
   "high_star_powerful_enable": "Enable powerful pursuit on high stars",
   "powerful_count": "Powerful pursuit count",

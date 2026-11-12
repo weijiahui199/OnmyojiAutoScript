@@ -234,6 +234,9 @@ class MetaDemonAssistanceConfig(ConfigBase):
         description='填写游戏内好友完整名字；多个名字用分号或换行分隔，按名称精确匹配，不使用近似名字。')
     poll_interval: int = Field(default=5, ge=2, le=60, title='协助轮询间隔（秒）',
         description='上供按此间隔检查是否已击杀，协助按此间隔重新寻找好友分享。')
+    offering_order: str = Field(default='', title='上供顺序',
+        description='仅协助端填写。多个上供脚本名用分号分隔，按此顺序一个一个上供：每轮只召唤一个星级（按协助端「上供鬼王星级」的顺序），'
+                    '当前号该星级门票用完后自动让下一个号开始，全部轮完再从第一个号上供下一个星级。留空则各上供号按自己的调度同时上供。')
 
     @field_validator('cooperation_script')
     @classmethod

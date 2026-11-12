@@ -2,7 +2,7 @@
 from base64 import b64decode, b64encode
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 import cv2
@@ -175,10 +175,13 @@ class GhostOffering:
     # 好友行点击被吞（面板滑入动画）时的补点间隔
     CLICK_RETRY_SECONDS = 1.2
 
-    def __init__(self, task, link=None):
+    def __init__(self, task, link=None, stars=None):
         self.task = task
         self.link = link
         self.settings = task.conf.assistance_config
+        # 轮流上供时只召唤本轮的星级；否则按「上供鬼王星级」。
+        self.stars = tuple(stars) if stars else self.settings.offering_star.stars
+        self.stars_text = '/'.join(f'{int(star)}星' for star in self.stars)
         self.shared_generation = None
         self.waiting = False
         self.settled = False
@@ -341,8 +344,8 @@ class GhostOffering:
 
     def share(self):
         t = self.task
-        if t.cur_boss_type not in self.settings.offering_star.stars:
-            logger.warning(f'仅允许分享本次已确认召唤的{self.settings.offering_star.value}鬼王')
+        if t.cur_boss_type not in self.stars:
+            logger.warning(f'仅允许分享本次已确认召唤的{self.stars_text}鬼王')
             return False
         portrait_sent = False
         select_recipients = True
@@ -417,9 +420,9 @@ class GhostOffering:
             return True
         if not self.settled and t.appear(t.I_MD_FIRE):
             self.empty_frames = 0
-            if t.cur_boss_type not in self.settings.offering_star.stars:
+            if t.cur_boss_type not in self.stars:
                 if not self.unknown_reported:
-                    logger.warning(f'已有鬼王星级未确认或不满足上供要求，不分享、不挑战；等待其消失后仅召唤{self.settings.offering_star.value}')
+                    logger.warning(f'已有鬼王星级未确认或不满足上供要求，不分享、不挑战；等待其消失后仅召唤{self.stars_text}')
                     self.unknown_reported = True
             elif self.shared_generation != t._boss_generation:
                 if not self.share():
@@ -448,7 +451,7 @@ class GhostOffering:
             if not self.within_limit():
                 return True
         self.empty_frames = 0
-        return t.check_and_switch_ticket(sequence=self.settings.offering_star.stars) or t.State.done
+        return t.check_and_switch_ticket(sequence=self.stars) or t.State.done
 
 
 class GhostAssistant:
@@ -557,13 +560,29 @@ class GhostAssistant:
                 t.swipe(swipe)
                 time.sleep(0.5)
 
+    # 轮流上供时，上一个号交接给下一个号之间会有空档，协助端在此期间继续等待。
+    HANDOFF_GRACE_SECONDS = 180
+
     def run(self):
         self.task.goto_page(pages.page_meta_demon_boss)
         waiting_logged = False
+        grace = self.HANDOFF_GRACE_SECONDS if len(self.link.peers) > 1 else 0
+        idle_since = None
         while self.within_limit():
             if not self.link.peer_in_task():
-                logger.info('上供端已离开超鬼王，结束本轮协助')
-                return False
+                idle_since = idle_since or time.monotonic()
+                if time.monotonic() - idle_since >= grace:
+                    logger.info('上供端已离开超鬼王，结束本轮协助')
+                    return False
+                if not waiting_logged:
+                    logger.info(f'上供端暂时都不在超鬼王，等待下一个上供号（最多 {grace} 秒）')
+                    waiting_logged = True
+                self.task.device.stuck_record_clear()
+                time.sleep(self.task.conf.assistance_config.poll_interval)
+                continue
+            if idle_since is not None:
+                idle_since = None
+                waiting_logged = False
             self.task.device.stuck_record_clear()
             target = self.link.target()
             if target and target != self.settled_target:
@@ -577,9 +596,9 @@ class GhostAssistant:
         return True
 
 
-def run_offering(task, link):
+def run_offering(task, link, stars=None):
     task.goto_page(pages.page_meta_demon_boss)
-    offering = GhostOffering(task, link)
+    offering = GhostOffering(task, link, stars=stars)
     success = True
     while offering.within_limit():
         if not link.peer_in_task():
@@ -604,10 +623,16 @@ def run_assistance(task):
     if offering and not settings.friends:
         raise RequestHumanTakeover('鬼王上供需要填写分享好友名字')
     task.before_run()
+    chain, chain_stars = None, None
+    if offering:
+        chain, chain_stars = _offering_turn(task)
     try:
         link = AssistanceLink(task)
         if not link.peers and not offering:
             raise RequestHumanTakeover('鬼王协助需要关联对端脚本，以传送截图和确认分享')
+        if chain is not None and link.runtime.runner_task(chain.assist) != 'MetaDemon':
+            # 轮到本号时协助端可能刚结束上一段协助，让它重新进入超鬼王。
+            chain.wake(chain.assist)
         ready = bool(link.peer and link.wait_for_peer())
     except ScriptError as exc:
         if not offering:
@@ -615,7 +640,11 @@ def run_assistance(task):
         logger.info(f'鬼王上供协同未匹配：{exc}')
         ready = False
     if not ready:
-        task.set_next_run(task='MetaDemon', success=False)
+        if chain is not None:
+            # 仍然轮到本号，稍后重试，不要等完整的失败间隔。
+            task.set_next_run(task='MetaDemon', target=datetime.now() + timedelta(minutes=5))
+        else:
+            task.set_next_run(task='MetaDemon', success=False)
         if offering:
             logger.info('未匹配到可用的鬼王协助脚本，跳过本次上供')
             raise TaskEnd
@@ -626,8 +655,56 @@ def run_assistance(task):
     else:
         link.publish()
         try:
-            success = run_offering(task, link)
+            success = run_offering(task, link, stars=chain_stars)
         finally:
             link.publish()
+        if chain is not None:
+            _finish_offering_turn(task, chain, success)
+            return
     task.set_next_run(task='MetaDemon', success=success)
+    task.finish_task()
+
+
+def _offering_turn(task):
+    """轮流上供：返回 (轮流状态, 本号本轮星级)；没轮到本号时直接结束本次任务。"""
+    from tasks.MetaDemon.offering_chain import OfferingChain
+    if not task.config.meta_demon.assistance_config.cooperation_script:
+        return None, None
+    runtime = getattr(task.config, 'cooperation_runtime', None) or Cooperation(task.config.config_name)
+    try:
+        chain = OfferingChain.load(task, runtime)
+    except ScriptError as exc:
+        logger.warning(f'轮流上供配置读取失败，按普通上供处理：{exc}')
+        return None, None
+    if chain is None:
+        return None, None
+    star = chain.my_star()
+    if star is None:
+        state = chain.state() or {}
+        logger.info(f'轮流上供：当前轮到 {state.get("turn") or "（未开始）"}，本号不上供')
+        task.set_next_run(task='MetaDemon', success=True)
+        raise TaskEnd
+    logger.info(f'轮流上供：轮到本号，上供{int(star)}星')
+    return chain, (star,)
+
+
+def _finish_offering_turn(task, chain, success):
+    in_limit = (datetime.now() - task.start_time < task.limit_time and task.total_count < task.limit_count)
+    if success and task.State.done and in_limit:
+        # 本星级门票已用完：交给下一个号。
+        next_name = chain.advance()
+        if next_name and next_name != chain.name:
+            chain.wake(next_name)
+        elif next_name == chain.name:
+            # 顺序里只剩本号可用，直接接着上供下一个星级。
+            task.set_next_run(task='MetaDemon', target=datetime.now())
+            task.finish_task()
+            return
+        task.set_next_run(task='MetaDemon', success=True)
+    elif success:
+        # 运行时间或次数到上限但门票还没用完：仍是本号的回合，马上继续。
+        logger.info('轮流上供：本号本星级门票未用完，继续上供')
+        task.set_next_run(task='MetaDemon', target=datetime.now())
+    else:
+        task.set_next_run(task='MetaDemon', success=False)
     task.finish_task()

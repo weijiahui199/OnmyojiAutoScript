@@ -438,5 +438,6 @@
   "role": "身份",
   "offering_star": "上供鬼王星级",
   "friend_names": "分享好友名字",
-  "poll_interval": "协助轮询间隔（秒）"
+  "poll_interval": "协助轮询间隔（秒）",
+  "offering_order": "上供顺序"
 }

@@ -12,12 +12,12 @@ from tasks.MetaDemon.assistance import AssistanceLink, GhostAssistant
 from tasks.MetaDemon.config import AssistanceRole, MetaDemon, MetaDemonMode
 
 
-def write_config(root, name, *, role, peer='', enable=True, mode=None, ticket=None):
+def write_config(root, name, *, role, peer='', enable=True, mode=None, ticket=None, **assistance):
     config = {
         'meta_demon': {
             'scheduler': {'enable': enable, 'next_run': '2026-01-01 00:00:00'},
             'meta_demon_config': {'mode': [m.value for m in (mode or [MetaDemonMode.BOSS_ASSIST])]},
-            'assistance_config': {'role': role.value, 'cooperation_script': peer},
+            'assistance_config': {'role': role.value, 'cooperation_script': peer, **assistance},
         }
     }
     if ticket:
@@ -230,6 +230,47 @@ class AssistanceLinkChecks(unittest.TestCase):
         second = link.target()
         self.assertEqual((second[2], second[3]), ('portrait-a', 'offer_a'))
         self.assertEqual(int(link.target_star(second)), 4)
+
+    def test_offering_chain_rotates_accounts_then_stars(self):
+        from tasks.MetaDemon.config import BossType
+        from tasks.MetaDemon.offering_chain import OfferingChain
+        write_config(self.root, 'assist', role=AssistanceRole.ASSIST,
+                     offering_order='a;b;off;c', offering_star='四星及以上')
+        for name in ('a', 'b', 'c'):
+            write_config(self.root, name, role=AssistanceRole.OFFERING, peer='assist')
+        # 顺序里的 off 没启用超鬼王，轮到时要跳过。
+        write_config(self.root, 'off', role=AssistanceRole.OFFERING, peer='assist', enable=False)
+
+        def chain(name):
+            task = self.make_task(role=AssistanceRole.OFFERING, peer='assist', self_name=name)
+            return OfferingChain.load(task, task.config.cooperation_runtime)
+
+        a, b, c = chain('a'), chain('b'), chain('c')
+        self.assertEqual(a.phases, (BossType.FIVE_STARS, BossType.FOUR_STARS, BossType.SIX_STARS))
+        # 没开始时只有第一个号能开始新一轮。
+        self.assertIsNone(b.my_star())
+        self.assertEqual(a.my_star(), BossType.FIVE_STARS)
+        self.assertIsNone(b.my_star())
+        self.assertIsNone(b.advance())  # 没轮到的号不能交接
+        turns = []
+        for _ in range(9):
+            current = {'a': a, 'b': b, 'c': c}[a.state()['turn']]
+            turns.append((current.name, int(current.my_star())))
+            current.advance()
+        self.assertEqual(turns, [('a', 5), ('b', 5), ('c', 5), ('a', 4), ('b', 4), ('c', 4),
+                                 ('a', 6), ('b', 6), ('c', 6)])
+        self.assertEqual(a.state()['turn'], '')
+        self.assertIsNone(c.my_star())
+        self.assertEqual(a.my_star(), BossType.FIVE_STARS)  # 新一轮
+
+    def test_offering_chain_ignores_accounts_outside_order(self):
+        from tasks.MetaDemon.offering_chain import OfferingChain
+        write_config(self.root, 'assist', role=AssistanceRole.ASSIST, offering_order='a')
+        task = self.make_task(role=AssistanceRole.OFFERING, peer='assist', self_name='z')
+        self.assertIsNone(OfferingChain.load(task, task.config.cooperation_runtime))
+        write_config(self.root, 'assist', role=AssistanceRole.ASSIST)
+        task = self.make_task(role=AssistanceRole.OFFERING, peer='assist', self_name='a')
+        self.assertIsNone(OfferingChain.load(task, task.config.cooperation_runtime))
 
     def test_offering_star_order_is_five_four_six(self):
         from tasks.MetaDemon.config import BossType, OfferingStar
