@@ -33,14 +33,16 @@ class ConfigChecks(unittest.TestCase):
         self.assertTrue(conf.meta_demon_shop_config.call_realm_raid)
 
 
-def shop_task(currencies, buy_times=20, realm_raid_enabled=True):
+def shop_task(currencies, buy_times=20, realm_raid_enabled=True, tickets_full=False, call_realm_raid=True):
     """不连设备的任务对象：红叶读数按顺序给出，购买弹窗总能打开。"""
     task = ScriptTask.__new__(ScriptTask)
     task.config = SimpleNamespace(
-        meta_demon_shop=MetaDemonShop(meta_demon_shop_config={'buy_times': buy_times}),
+        meta_demon_shop=MetaDemonShop(meta_demon_shop_config={
+            'buy_times': buy_times, 'call_realm_raid': call_realm_raid}),
         realm_raid=SimpleNamespace(scheduler=SimpleNamespace(enable=realm_raid_enabled)),
     )
     task.goto_page = MagicMock()
+    task.realm_raid_tickets_full = MagicMock(return_value=tickets_full)
     task.close_buy_dialog = MagicMock()
     task.set_next_run = MagicMock()
     task.read_currency = MagicMock(side_effect=currencies)
@@ -90,6 +92,51 @@ class RunChecks(unittest.TestCase):
         self.assertFalse(runs['MetaDemonShop']['success'])
 
 
+class RealmRaidTicketChecks(unittest.TestCase):
+    def test_full_tickets_skip_buying_and_run_realm_raid_first(self):
+        task = shop_task([], tickets_full=True)
+        with self.assertRaises(TaskEnd):
+            task.run()
+        task.read_currency.assert_not_called()
+        task.open_buy_dialog.assert_not_called()
+        runs = next_runs(task)
+        self.assertIn('target', runs['RealmRaid'])
+        # 很快再来：个人突破把券打掉之后接着买
+        self.assertTrue(runs['MetaDemonShop']['success'])
+
+    def test_full_tickets_without_a_way_to_spend_them_back_off(self):
+        for options in ({'realm_raid_enabled': False}, {'call_realm_raid': False}):
+            with self.subTest(options):
+                task = shop_task([], tickets_full=True, **options)
+                with self.assertRaises(TaskEnd):
+                    task.run()
+                task.open_buy_dialog.assert_not_called()
+                runs = next_runs(task)
+                self.assertNotIn('RealmRaid', runs)
+                self.assertFalse(runs['MetaDemonShop']['success'])
+
+    def read(self, *counters):
+        task = ScriptTask.__new__(ScriptTask)
+        task.goto_page = MagicMock()
+        task.screenshot = MagicMock()
+        task.device = SimpleNamespace(image=None)
+        rule = 'tasks.MetaDemonShop.script_task.ExplorationAssets.O_REALM_RAID_NUMBER_META'
+        with patch(rule) as ocr, patch('tasks.MetaDemonShop.script_task.time.sleep'):
+            ocr.ocr_digit_counter.side_effect = counters
+            return task.realm_raid_tickets_full()
+
+    def test_ticket_counter_decides_full(self):
+        self.assertTrue(self.read((30, 0, 30)))
+        self.assertFalse(self.read((29, 1, 30)))
+        self.assertFalse(self.read((0, 30, 30)))
+
+    def test_invalid_readings_are_retried_then_treated_as_not_full(self):
+        # 第一帧读错（上限不是 30），第二帧读对
+        self.assertTrue(self.read((3, 0, 3), (30, 0, 30)))
+        # 一直读不出来：不拦着购买
+        self.assertFalse(self.read((0, 0, 0), (0, 0, 0), (41, -11, 30)))
+
+
 class NavigationChecks(unittest.TestCase):
     """导航只在「全局 + 起点分类 + 终点分类 + 任务分类」里找路，商店必须和超鬼王同一分类。"""
 
@@ -115,6 +162,13 @@ class NavigationChecks(unittest.TestCase):
         from tasks.MetaDemonShop.page import page_meta_demon_shop
 
         self.assertEqual(self.path(page_main, page_meta_demon_shop), ['page_meta_demon', 'page_meta_demon_shop'])
+
+    def test_exploration_page_reaches_the_shop_after_the_ticket_check(self):
+        from tasks.GameUi.page import page_exploration
+        from tasks.MetaDemonShop.page import page_meta_demon_shop
+
+        self.assertEqual(self.path(page_exploration, page_meta_demon_shop),
+                         ['page_main', 'page_meta_demon', 'page_meta_demon_shop'])
 
     def test_shop_returns_to_the_courtyard(self):
         from tasks.GameUi.page import page_main

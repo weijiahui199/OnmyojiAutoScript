@@ -9,13 +9,16 @@ from typing import Optional
 from module.atom.click import RuleClick
 from module.exception import TaskEnd
 from module.logger import logger
+from tasks.Exploration.assets import ExplorationAssets
 from tasks.GameUi.game_ui import GameUi
-from tasks.GameUi.page import page_main
+from tasks.GameUi.page import page_exploration, page_main
 from tasks.MetaDemonShop.assets import MetaDemonShopAssets
 from tasks.MetaDemonShop.page import page_meta_demon_shop
 
 # 简易礼盒单价；红叶少于这个数就一个也买不了
 BOX_PRICE = 1888
+# 突破券上限
+REALM_RAID_TICKET_LIMIT = 30
 # 用「简易」区分同一页里 4888 的「超鬼王朴素礼盒」
 BOX_KEYWORD = '简易'
 # 点卡片下方「不限制购买数量 / 1888」这两行才会打开购买弹窗；点图标只会弹出物品说明。
@@ -61,27 +64,54 @@ class ScriptTask(GameUi, MetaDemonShopAssets):
 
     def run(self):
         conf = self.config.meta_demon_shop.meta_demon_shop_config
-        self.goto_page(page_meta_demon_shop)
+        # 礼盒会开出突破券，券满了再买就浪费：先去把券打掉，下一轮再买
+        if self.realm_raid_tickets_full():
+            can_raid = conf.call_realm_raid and self.config.realm_raid.scheduler.enable
+            if can_raid:
+                logger.info('突破券已满，本轮不购买，先执行个人突破')
+            else:
+                logger.warning('突破券已满，本轮不购买；「买完后执行个人突破」未开或个人突破任务未启用，'
+                               '券不会自动消耗，按失败间隔再来')
+            self.finish(success=can_raid, call_realm_raid=can_raid)
 
+        self.goto_page(page_meta_demon_shop)
         currency = self.read_currency()
         if currency is None or currency < BOX_PRICE:
             logger.info(f'红叶数量 {currency}，不足 {BOX_PRICE}，本轮不购买')
-            self.finish(bought=0, call_realm_raid=False)
+            self.finish(success=False, call_realm_raid=False)
 
         bought = self.buy_boxes(conf.buy_times)
         logger.info(f'本轮购买 {bought}/{conf.buy_times} 次')
-        self.finish(bought=bought, call_realm_raid=conf.call_realm_raid)
+        self.finish(success=bool(bought), call_realm_raid=bool(bought) and conf.call_realm_raid)
 
-    def finish(self, bought: int, call_realm_raid: bool):
+    def finish(self, success: bool, call_realm_raid: bool):
+        """回庭院并排下次运行时间。
+
+        success：买到了礼盒，或券满了先让位给个人突破——按成功间隔很快再来一轮；
+        否则是红叶用完或界面异常，按失败间隔。
+        """
         self.close_buy_dialog()
         self.goto_page(page_main)
-        if bought and call_realm_raid:
+        if call_realm_raid:
             if not self.config.realm_raid.scheduler.enable:
                 logger.warning('个人突破任务未启用，设置了运行时间也不会执行')
             self.set_next_run(task='RealmRaid', server=False, target=datetime.now())
-        # 买到了就按成功间隔很快再来一轮；没买到说明红叶用完或界面异常，按失败间隔
-        self.set_next_run(task='MetaDemonShop', success=bool(bought), finish=True)
+        self.set_next_run(task='MetaDemonShop', success=success, finish=True)
         raise TaskEnd('MetaDemonShop')
+
+    def realm_raid_tickets_full(self) -> bool:
+        """在探索页读突破券数量，和探索任务检测突破券用的是同一处读数。读不出有效数字时按没满处理。"""
+        self.goto_page(page_exploration)
+        for _ in range(3):
+            self.screenshot()
+            current, _, total = ExplorationAssets.O_REALM_RAID_NUMBER_META.ocr_digit_counter(self.device.image)
+            if 0 <= current <= total == REALM_RAID_TICKET_LIMIT:
+                logger.info(f'突破券 {current}/{total}')
+                return current >= total
+            logger.warning(f'突破券 OCR 读数无效({current}/{total})，有效范围为0至30张，重新识别')
+            time.sleep(0.5)
+        logger.warning('没读到有效的突破券数量，按没满继续购买')
+        return False
 
     def read_currency(self) -> Optional[int]:
         """读顶栏红叶数量。
