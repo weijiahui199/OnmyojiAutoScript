@@ -140,14 +140,14 @@ class FindBoxChecks(unittest.TestCase):
         with patch.object(ScriptTask.O_SHOP_ITEMS, 'detect_and_ocr', return_value=results):
             return task.find_box()
 
-    def test_clicks_randomly_inside_the_icon_under_the_simple_box_name(self):
+    def test_clicks_randomly_on_the_quantity_and_price_rows_not_the_icon(self):
         target = self.find([self.result('超鬼王朴素礼盒', 239, 218), self.result('超鬼王简易礼盒', 22, 18)])
-        # 截图里简易礼盒的图标大约在 x 565-640、y 270-345
-        self.assertEqual(tuple(target.roi_front), (576, 281, 56, 54))
+        # 名字顶边在 y=243 时：图标约 y 270-345（点了只弹说明），数量和价格两行约 y 353-399
+        self.assertEqual(tuple(target.roi_front), (554, 351, 100, 42))
         points = {target.coord() for _ in range(50)}
         self.assertGreater(len(points), 1)
         for x, y in points:
-            self.assertTrue(576 <= x <= 632 and 281 <= y <= 335, (x, y))
+            self.assertTrue(554 <= x <= 654 and 351 <= y <= 393, (x, y))
 
     def test_plain_box_alone_is_never_a_match(self):
         self.assertIsNone(self.find([self.result('超鬼王朴素礼盒', 239, 218)]))

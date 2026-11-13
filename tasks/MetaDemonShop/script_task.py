@@ -18,10 +18,11 @@ from tasks.MetaDemonShop.page import page_meta_demon_shop
 BOX_PRICE = 1888
 # 用「简易」区分同一页里 4888 的「超鬼王朴素礼盒」
 BOX_KEYWORD = '简易'
-# 图标相对商品名的位置：从名字顶边往下 ICON_TOP 开始，以名字中线为中心、宽高 ICON_SIZE 的区域。
-# 点图标比点名字稳；区域比图标本身（约 75x75）小一圈，随机落点不会点到卡片外
-ICON_TOP = 38
-ICON_SIZE = (56, 54)
+# 点卡片下方「不限制购买数量 / 1888」这两行才会打开购买弹窗；点图标只会弹出物品说明。
+# 区域相对商品名：从名字顶边往下 BUY_ROW_TOP 开始，以名字中线为中心、宽高 BUY_ROW_SIZE，
+# 上边离图标底边、下边离卡片底边都留了空
+BUY_ROW_TOP = 108
+BUY_ROW_SIZE = (100, 42)
 # 名字再往下就可能只露出半张卡片，先继续滑
 ITEM_NAME_MAX_Y = 470
 # 向上找一遍、滑回顶部、再向上找一遍
@@ -124,7 +125,7 @@ class ScriptTask(GameUi, MetaDemonShopAssets):
         return bought
 
     def find_box(self) -> Optional[RuleClick]:
-        """在当前帧的商品列表里找简易礼盒，返回图标的点击区域（落点在区域内随机）。"""
+        """在当前帧的商品列表里找简易礼盒，返回卡片上数量和价格两行的点击区域（落点在区域内随机）。"""
         roi_x, roi_y = self.O_SHOP_ITEMS.roi[0], self.O_SHOP_ITEMS.roi[1]
         for result in self.O_SHOP_ITEMS.detect_and_ocr(self.device.image, logDisplay=False):
             if BOX_KEYWORD not in result.ocr_text:
@@ -134,8 +135,8 @@ class ScriptTask(GameUi, MetaDemonShopAssets):
             if name_y > ITEM_NAME_MAX_Y:
                 return None
             center_x = int((box[0, 0] + box[1, 0]) / 2) + roi_x
-            width, height = ICON_SIZE
-            roi = (center_x - width // 2, name_y + ICON_TOP, width, height)
+            width, height = BUY_ROW_SIZE
+            roi = (center_x - width // 2, name_y + BUY_ROW_TOP, width, height)
             return RuleClick(roi_front=roi, roi_back=roi, name='shop_box')
         return None
 
@@ -159,7 +160,7 @@ class ScriptTask(GameUi, MetaDemonShopAssets):
                 continue
             target = self.find_box()
             if target is not None:
-                logger.info(f'找到简易礼盒，点击图标区域 {tuple(target.roi_front)}')
+                logger.info(f'找到简易礼盒，点击卡片价格区域 {tuple(target.roi_front)}')
                 self.click(target)
                 time.sleep(1)
                 continue
