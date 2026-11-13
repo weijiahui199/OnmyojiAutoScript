@@ -1,0 +1,38 @@
+[
+  {
+    "itemName": "shop_currency",
+    "roiFront": "715,10,115,44",
+    "roiBack": "715,10,115,44",
+    "mode": "Single",
+    "method": "Default",
+    "keyword": "",
+    "description": "商店顶栏的红叶数量，一万以上带万字"
+  },
+  {
+    "itemName": "shop_items",
+    "roiFront": "505,225,660,330",
+    "roiBack": "505,225,660,330",
+    "mode": "Full",
+    "method": "Default",
+    "keyword": "",
+    "description": "商店商品列表的名称"
+  },
+  {
+    "itemName": "buy_title",
+    "roiFront": "530,132,220,44",
+    "roiBack": "530,132,220,44",
+    "mode": "Single",
+    "method": "Default",
+    "keyword": "",
+    "description": "购买弹窗的商品名"
+  },
+  {
+    "itemName": "buy_price",
+    "roiFront": "625,556,95,46",
+    "roiBack": "625,556,95,46",
+    "mode": "Single",
+    "method": "Default",
+    "keyword": "",
+    "description": "购买弹窗价格按钮上的总价，数量拉满后会大于单价"
+  }
+]

@@ -1,0 +1,29 @@
+[
+  {
+    "itemName": "shop_check",
+    "imageName": "mds_shop_check.png",
+    "roiFront": "152,20,128,36",
+    "roiBack": "140,8,160,60",
+    "method": "Template matching",
+    "threshold": 0.8,
+    "description": "解厄商店标题"
+  },
+  {
+    "itemName": "buy_max",
+    "imageName": "mds_buy_max.png",
+    "roiFront": "757,454,56,56",
+    "roiBack": "740,438,92,90",
+    "method": "Template matching",
+    "threshold": 0.8,
+    "description": "购买弹窗的数量拉满按钮"
+  },
+  {
+    "itemName": "buy_confirm",
+    "imageName": "mds_buy_confirm.png",
+    "roiFront": "590,560,38,38",
+    "roiBack": "552,540,176,80",
+    "method": "Template matching",
+    "threshold": 0.8,
+    "description": "购买弹窗价格按钮上的红叶"
+  }
+]

@@ -1,0 +1,56 @@
+[
+  {
+    "itemName": "shop_entry",
+    "roiFront": "1145,628,52,44",
+    "roiBack": "1145,628,52,44",
+    "description": "超鬼王主界面右下角的解厄商店"
+  },
+  {
+    "itemName": "buy_price",
+    "roiFront": "564,556,152,46",
+    "roiBack": "564,556,152,46",
+    "description": "购买弹窗的整个价格按钮（按钮约在 x 553-727、y 548-610，四周留了边）"
+  },
+  {
+    "itemName": "buy_blank_1",
+    "roiFront": "150,330,200,140",
+    "roiBack": "150,330,200,140",
+    "description": "购买弹窗左侧空白处（中部），点一下关闭弹窗"
+  },
+  {
+    "itemName": "buy_blank_2",
+    "roiFront": "140,190,230,110",
+    "roiBack": "140,190,230,110",
+    "description": "购买弹窗左侧空白处（上部）"
+  },
+  {
+    "itemName": "buy_blank_3",
+    "roiFront": "130,480,180,100",
+    "roiBack": "130,480,180,100",
+    "description": "购买弹窗左侧空白处（下部，在「已获得皮肤」和大购买按钮上方）"
+  },
+  {
+    "itemName": "buy_blank_4",
+    "roiFront": "270,95,130,80",
+    "roiBack": "270,95,130,80",
+    "description": "购买弹窗左侧空白处（左上，顶栏下方）"
+  },
+  {
+    "itemName": "buy_blank_5",
+    "roiFront": "15,450,95,140",
+    "roiBack": "15,450,95,140",
+    "description": "购买弹窗左侧空白处（最左下，名牌下方）"
+  },
+  {
+    "itemName": "buy_blank_6",
+    "roiFront": "880,664,290,42",
+    "roiBack": "880,664,290,42",
+    "description": "购买弹窗右侧空白处（商品架下方的地面）"
+  },
+  {
+    "itemName": "buy_blank_7",
+    "roiFront": "1176,560,92,110",
+    "roiBack": "1176,560,92,110",
+    "description": "购买弹窗右侧空白处（兑换/积分/好友页签下方）"
+  }
+]

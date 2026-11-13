@@ -1,0 +1,16 @@
+[
+  {
+    "itemName": "shop_swipe_up",
+    "roiFront": "760,530,140,24",
+    "roiBack": "760,330,140,24",
+    "mode": "default",
+    "description": "商品列表向上滑，看后面的商品"
+  },
+  {
+    "itemName": "shop_swipe_down",
+    "roiFront": "760,300,140,24",
+    "roiBack": "760,540,140,24",
+    "mode": "default",
+    "description": "商品列表向下滑，回到前面的商品"
+  }
+]

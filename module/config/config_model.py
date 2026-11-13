@@ -59,6 +59,7 @@ from tasks.ActivityShikigami.config import ActivityShikigami
 from tasks.MartialTournament.config import MartialTournament
 from tasks.MetaDemon.config import MetaDemon
 from tasks.MetaDemonTicket.config import MetaDemonTicket
+from tasks.MetaDemonShop.config import MetaDemonShop
 from tasks.FrogBoss.config import FrogBoss
 from tasks.FloatParade.config import FloatParade
 from tasks.Quiz.config import Quiz
@@ -128,6 +129,7 @@ class ConfigModel(ConfigBase):
     martial_tournament: MartialTournament = Field(default_factory=MartialTournament)
     meta_demon: MetaDemon = Field(default_factory=MetaDemon)
     meta_demon_ticket: MetaDemonTicket = Field(default_factory=MetaDemonTicket)
+    meta_demon_shop: MetaDemonShop = Field(default_factory=MetaDemonShop)
     frog_boss: FrogBoss = Field(default_factory=FrogBoss)
     float_parade: FloatParade = Field(default_factory=FloatParade)
     quiz: Quiz = Field(default_factory=Quiz)
