@@ -54,6 +54,10 @@ class ScriptTask(GameUi, MetaDemonShopAssets):
                   MetaDemonShopAssets.C_BUY_BLANK_5, MetaDemonShopAssets.C_BUY_BLANK_6,
                   MetaDemonShopAssets.C_BUY_BLANK_7)
 
+    def _infer_task_category(self):
+        # 和超鬼王共用页面分类，识别当前页时才会把超鬼王主界面算进来
+        return page_meta_demon_shop.category
+
     def run(self):
         conf = self.config.meta_demon_shop.meta_demon_shop_config
         self.goto_page(page_meta_demon_shop)
@@ -155,14 +159,16 @@ class ScriptTask(GameUi, MetaDemonShopAssets):
                 continue
             target = self.find_box()
             if target is not None:
+                logger.info(f'找到简易礼盒，点击图标区域 {tuple(target.roi_front)}')
                 self.click(target)
                 time.sleep(1)
                 continue
             if swipes >= SWIPES_PER_PASS * 3:
                 return False
             back_to_top = SWIPES_PER_PASS <= swipes < SWIPES_PER_PASS * 2
-            self.swipe(self.S_SHOP_SWIPE_DOWN if back_to_top else self.S_SHOP_SWIPE_UP)
             swipes += 1
+            logger.info(f'当前屏没有简易礼盒，{"滑回顶部" if back_to_top else "向后翻"}（第 {swipes} 次滑动）')
+            self.swipe(self.S_SHOP_SWIPE_DOWN if back_to_top else self.S_SHOP_SWIPE_UP)
             time.sleep(1)
         return False
 

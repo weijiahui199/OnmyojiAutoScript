@@ -90,6 +90,44 @@ class RunChecks(unittest.TestCase):
         self.assertFalse(runs['MetaDemonShop']['success'])
 
 
+class NavigationChecks(unittest.TestCase):
+    """导航只在「全局 + 起点分类 + 终点分类 + 任务分类」里找路，商店必须和超鬼王同一分类。"""
+
+    @staticmethod
+    def task():
+        from tasks.GameUi.registry import PageRegistry
+        from tasks.GameUi.session import NavigatorSession
+
+        task = ScriptTask.__new__(ScriptTask)
+        task.navigator = NavigatorSession(task_category=task._infer_task_category())
+        task.navigator.bootstrap(PageRegistry.all())
+        return task
+
+    def path(self, start, destination):
+        task = self.task()
+        current = task.navigator.resolve_page(start)
+        route = task._build_path(current, task.navigator.resolve_page(destination))
+        self.assertIsNotNone(route, f'{start} -> {destination} 没有路')
+        return [transition.destination.name for transition in route]
+
+    def test_courtyard_reaches_the_shop_through_meta_demon(self):
+        from tasks.GameUi.page import page_main
+        from tasks.MetaDemonShop.page import page_meta_demon_shop
+
+        self.assertEqual(self.path(page_main, page_meta_demon_shop), ['page_meta_demon', 'page_meta_demon_shop'])
+
+    def test_shop_returns_to_the_courtyard(self):
+        from tasks.GameUi.page import page_main
+        from tasks.MetaDemonShop.page import page_meta_demon_shop
+
+        self.assertEqual(self.path(page_meta_demon_shop, page_main), ['page_meta_demon', 'page_main'])
+
+    def test_task_detects_meta_demon_pages(self):
+        from tasks.MetaDemon.page import page_meta_demon
+
+        self.assertEqual(self.task()._infer_task_category(), page_meta_demon.category)
+
+
 class FindBoxChecks(unittest.TestCase):
     @staticmethod
     def result(text, x, y):
