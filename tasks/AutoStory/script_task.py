@@ -1,6 +1,8 @@
 import time
 import random
+from functools import lru_cache
 
+from module.atom.click import RuleClick
 from module.exception import TaskEnd
 from module.logger import logger
 from tasks.AutoStory.assets import AutoStoryAssets
@@ -16,6 +18,47 @@ class _StoryFinished(Exception):
     """识别到庭院主界面，正常结束当前辅助流程。"""
 
 
+@lru_cache(maxsize=1)
+def _new_feature_ocr_model():
+    try:
+        from tasks.DraftDuel.v6_rec import V6Rec
+
+        return V6Rec()
+    except Exception as error:
+        logger.warning(f'新功能开启 v6-small OCR 加载失败，使用共享 OCR：{error}')
+        return None
+
+
+def handle_startup_popup(task) -> bool:
+    for target, action in (
+        (AutoStoryAssets.I_PERSONALIZED_CONTENT, AutoStoryAssets.C_DISABLE_PERSONALIZED_CONTENT),
+        (AutoStoryAssets.I_EXPLORATION_INTRO, AutoStoryAssets.C_EXPLORATION_INTRO_DISMISS),
+    ):
+        if task.appear(target):
+            task.appear_then_click(target, action=action, interval=1)
+            return True
+
+    rule = AutoStoryAssets.O_NEW_FEATURE_UNLOCKED
+    model = _new_feature_ocr_model()
+    if model is not None:
+        x, y, width, height = rule.roi
+        crop = task.device.image[y:y + height, x:x + width]
+        try:
+            text, score = model.recognize_single(crop)
+        except Exception as error:
+            logger.warning(f'新功能开启 v6-small OCR 识别失败，使用共享 OCR：{error}')
+            text = rule.ocr(task.device.image)
+        else:
+            if score < 0.6:
+                return False
+    else:
+        text = rule.ocr(task.device.image)
+    if ''.join(text.split()) == rule.keyword:
+        task.click(AutoStoryAssets.C_NEW_FEATURE_DISMISS, interval=1)
+        return True
+    return False
+
+
 class ScriptTask(GeneralBattle, GameUi, AutoStoryAssets):
     conf: AutoStory
 
@@ -25,6 +68,8 @@ class ScriptTask(GeneralBattle, GameUi, AutoStoryAssets):
             # 加载覆盖层出现时只等待和刷新，不执行点击或庭院结束判断。
             if self.appear(self.I_LOADING_1) or self.appear(self.I_LOADING_2):
                 time.sleep(0.4)
+                continue
+            if handle_startup_popup(self):
                 continue
             if getattr(self, '_story_monitor_enabled', False):
                 if self.appear(self.I_NEW_ONMYOJI_RED_CLOSE):
@@ -41,10 +86,16 @@ class ScriptTask(GeneralBattle, GameUi, AutoStoryAssets):
             return
         self._story_last_check = now
         if (self._on_courtyard_main()
+                and (self.appear(self.I_MAIN_GOTO_EXPLORATION) or self.appear(self.I_MAIN_GOTO_SUMMON))
                 and not self.appear(self.I_STORY_CHAT_1)
+                and not self.appear(self.I_STORY_CHAT_RIGHT_EDGE)
                 and not self.appear(self.I_STORY_CHAT_SKIP)
                 and not self.appear(self.I_NEW_ONMYOJI_RED_CLOSE)):
-            raise _StoryFinished
+            self._story_courtyard_frames += 1
+            if self._story_courtyard_frames >= 2:
+                raise _StoryFinished
+        else:
+            self._story_courtyard_frames = 0
 
     def _on_courtyard_main(self) -> bool:
         return self.appear(self.I_CHECK_MAIN) and not self.appear(self.I_CHECK_MAIN_SET)
@@ -59,10 +110,12 @@ class ScriptTask(GeneralBattle, GameUi, AutoStoryAssets):
         self._story_monitor_enabled = False
         self.screenshot()
         if not (self.appear(self.I_STORY_BACK)
-                or (self._on_courtyard_main() and self.appear(self.I_STORY_CHAT_1))):
-            logger.info('未识别到剧情返回标志，跳过自动剧情')
+                or self.appear(self.I_STORY_CHAT_1)
+                or self.appear(self.I_STORY_CHAT_RIGHT_EDGE)):
+            logger.info('未识别到剧情返回标志或对话入口，跳过自动剧情')
             return False
         self._story_last_check = time.monotonic()
+        self._story_courtyard_frames = 0
         self._reset_story_idle()
         self._story_unknown_click_at = 0
         self._reset_story_entry()
@@ -120,7 +173,8 @@ class ScriptTask(GeneralBattle, GameUi, AutoStoryAssets):
             return
 
         if self._on_courtyard_main():
-            if self._click_story_entry(self.I_STORY_CHAT_1):
+            if (self._click_story_entry(self.I_STORY_CHAT_1)
+                    or self._click_story_entry(self.I_STORY_CHAT_RIGHT_EDGE)):
                 self._reset_story_idle()
             return
 
@@ -131,6 +185,11 @@ class ScriptTask(GeneralBattle, GameUi, AutoStoryAssets):
 
         # 只有入口点击需要剧情主页面标志。
         if not self.appear(self.I_STORY_BACK):
+            # 新号首次进入时尚无完整庭院菜单和剧情返回按钮。
+            if (self._click_story_entry(self.I_STORY_CHAT_1)
+                    or self._click_story_entry(self.I_STORY_CHAT_RIGHT_EDGE)):
+                self._reset_story_idle()
+                return
             self._handle_story_idle()
             return
         if self._click_story_entry(self.I_STORY_FIGHT):
@@ -139,7 +198,7 @@ class ScriptTask(GeneralBattle, GameUi, AutoStoryAssets):
             else:
                 self._reset_story_idle()
             return
-        for target in (self.I_STORY_CHAT_1, self.I_STORY_CHAT_2):
+        for target in (self.I_STORY_CHAT_1, self.I_STORY_CHAT_RIGHT_EDGE, self.I_STORY_CHAT_2):
             if self._click_story_entry(target):
                 self._reset_story_idle()
                 return
@@ -161,7 +220,13 @@ class ScriptTask(GeneralBattle, GameUi, AutoStoryAssets):
         now = time.monotonic()
         if now < self._story_entry_click_at:
             return False
-        if not self.appear_then_click(target, interval=2):
+        action = None
+        if target in (self.I_STORY_CHAT_1, self.I_STORY_CHAT_RIGHT_EDGE):
+            # 新手引导的可点击范围较窄，落点固定在识别气泡的中心区域。
+            x, y, width, height = target.roi_front
+            center = (x + width // 2 - 4, y + height // 2 - 4, 8, 8)
+            action = RuleClick(roi_front=center, roi_back=center, name='story_chat_center', profile='High')
+        if not self.appear_then_click(target, action=action, interval=2):
             return False
         self._story_entry_attempts += 1
         self._story_entry_click_at = now + min(2 + self._story_entry_attempts, 6)
@@ -172,6 +237,10 @@ class ScriptTask(GeneralBattle, GameUi, AutoStoryAssets):
         self._story_walk_at = None
 
     def _handle_story_idle(self) -> None:
+        if any(self.appear(target) for target in (
+                self.I_STORY_CHAT_1, self.I_STORY_CHAT_RIGHT_EDGE, self.I_STORY_CHAT_2, self.I_STORY_FIGHT)):
+            self._reset_story_idle()
+            return
         now = time.monotonic()
         if not self.appear(self.I_STORY_BACK):
             # 未知界面兜底；是否结束由全局庭院识别判断。
