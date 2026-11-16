@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 from module.exception import TaskEnd
-from tasks.MetaDemonShop.config import MetaDemonShop
-from tasks.MetaDemonShop.script_task import BOX_PRICE, ScriptTask, parse_amount
+from tasks.MetaDemonShop.config import BoxType, MetaDemonShop
+from tasks.MetaDemonShop.script_task import ScriptTask, parse_amount
 
 
 class ParseAmountChecks(unittest.TestCase):
@@ -32,13 +32,22 @@ class ConfigChecks(unittest.TestCase):
         self.assertEqual(conf.meta_demon_shop_config.buy_times, 20)
         self.assertTrue(conf.meta_demon_shop_config.call_realm_raid)
 
+    def test_default_box_is_the_8888_one_and_boxes_are_told_apart_by_name(self):
+        self.assertEqual(MetaDemonShop().meta_demon_shop_config.box, BoxType.FINE)
+        self.assertEqual([(box.keyword, box.price) for box in BoxType],
+                         [('简易', 1888), ('朴素', 4888), ('精致', 8888)])
+        names = ['超鬼王简易礼盒', '超鬼王朴素礼盒', '超鬼王精致礼盒']
+        for box in BoxType:
+            self.assertEqual([name for name in names if box.keyword in name], [f'超鬼王{box.label}'])
 
-def shop_task(currencies, buy_times=20, realm_raid_enabled=True, tickets_full=False, call_realm_raid=True):
+
+def shop_task(currencies, buy_times=20, realm_raid_enabled=True, tickets_full=False, call_realm_raid=True,
+              box=BoxType.SIMPLE):
     """不连设备的任务对象：红叶读数按顺序给出，购买弹窗总能打开。"""
     task = ScriptTask.__new__(ScriptTask)
     task.config = SimpleNamespace(
         meta_demon_shop=MetaDemonShop(meta_demon_shop_config={
-            'buy_times': buy_times, 'call_realm_raid': call_realm_raid}),
+            'buy_times': buy_times, 'call_realm_raid': call_realm_raid, 'box': box.value}),
         realm_raid=SimpleNamespace(scheduler=SimpleNamespace(enable=realm_raid_enabled)),
     )
     task.goto_page = MagicMock()
@@ -57,8 +66,8 @@ def next_runs(task):
 
 class RunChecks(unittest.TestCase):
     def test_not_enough_currency_ends_without_buying(self):
-        for currency in (BOX_PRICE - 1, None):
-            task = shop_task([currency])
+        for box, currency in ((BoxType.SIMPLE, 1887), (BoxType.FINE, 8887), (BoxType.FINE, None)):
+            task = shop_task([currency], box=box)
             with self.assertRaises(TaskEnd):
                 task.run()
             task.open_buy_dialog.assert_not_called()
@@ -74,6 +83,13 @@ class RunChecks(unittest.TestCase):
         runs = next_runs(task)
         self.assertIn('target', runs['RealmRaid'])
         self.assertTrue(runs['MetaDemonShop']['success'])
+
+    def test_fine_box_needs_8888_per_purchase(self):
+        # 2 万红叶：精致礼盒买得起两次（每次读数后各扣 8888），第三次不够
+        task = shop_task([20000, 20000, 11112, 2224], box=BoxType.FINE)
+        with self.assertRaises(TaskEnd):
+            task.run()
+        self.assertEqual(task.confirm_purchase.call_count, 2)
 
     def test_stops_when_currency_runs_out_midway(self):
         task = shop_task([5000, 5000, 3112, 1224], buy_times=20)
@@ -188,8 +204,9 @@ class FindBoxChecks(unittest.TestCase):
         box = np.array([[x, y], [x + 154, y], [x + 154, y + 23], [x, y + 23]], dtype=float)
         return SimpleNamespace(ocr_text=text, box=box)
 
-    def find(self, results):
+    def find(self, results, box=BoxType.SIMPLE):
         task = ScriptTask.__new__(ScriptTask)
+        task.box = box
         task.device = SimpleNamespace(image=None)
         with patch.object(ScriptTask.O_SHOP_ITEMS, 'detect_and_ocr', return_value=results):
             return task.find_box()
@@ -202,6 +219,12 @@ class FindBoxChecks(unittest.TestCase):
         self.assertGreater(len(points), 1)
         for x, y in points:
             self.assertTrue(554 <= x <= 654 and 351 <= y <= 393, (x, y))
+
+    def test_each_box_type_only_matches_its_own_card(self):
+        cards = [self.result('超鬼王简易礼盒', 22, 18), self.result('超鬼王精致礼盒', 239, 18),
+                 self.result('超鬼王朴素礼盒', 456, 18)]
+        centers = {box: self.find(cards, box).roi_front[0] + 50 for box in BoxType}
+        self.assertEqual(centers, {BoxType.SIMPLE: 505 + 99, BoxType.FINE: 505 + 316, BoxType.PLAIN: 505 + 533})
 
     def test_plain_box_alone_is_never_a_match(self):
         self.assertIsNone(self.find([self.result('超鬼王朴素礼盒', 239, 218)]))

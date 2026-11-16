@@ -1,4 +1,4 @@
-"""清超鬼王商店：在解厄商店里用红叶反复购买「超鬼王简易礼盒」。"""
+"""清超鬼王商店：在解厄商店里用红叶反复购买配置里选的那种超鬼王礼盒。"""
 import random
 import re
 import time
@@ -13,14 +13,11 @@ from tasks.Exploration.assets import ExplorationAssets
 from tasks.GameUi.game_ui import GameUi
 from tasks.GameUi.page import page_exploration, page_main
 from tasks.MetaDemonShop.assets import MetaDemonShopAssets
+from tasks.MetaDemonShop.config import BoxType
 from tasks.MetaDemonShop.page import page_meta_demon_shop
 
-# 简易礼盒单价；红叶少于这个数就一个也买不了
-BOX_PRICE = 1888
 # 突破券上限
 REALM_RAID_TICKET_LIMIT = 30
-# 用「简易」区分同一页里 4888 的「超鬼王朴素礼盒」
-BOX_KEYWORD = '简易'
 # 点卡片下方「不限制购买数量 / 1888」这两行才会打开购买弹窗；点图标只会弹出物品说明。
 # 区域相对商品名：从名字顶边往下 BUY_ROW_TOP 开始，以名字中线为中心、宽高 BUY_ROW_SIZE，
 # 上边离图标底边、下边离卡片底边都留了空
@@ -58,13 +55,18 @@ class ScriptTask(GameUi, MetaDemonShopAssets):
                   MetaDemonShopAssets.C_BUY_BLANK_5, MetaDemonShopAssets.C_BUY_BLANK_6,
                   MetaDemonShopAssets.C_BUY_BLANK_7)
 
+    # 要买的礼盒；run() 开头按配置覆盖。靠名字里的两个字（简易 / 朴素 / 精致）区分同一页的三种礼盒
+    box = BoxType.FINE
+
     def _infer_task_category(self):
         # 和超鬼王共用页面分类，识别当前页时才会把超鬼王主界面算进来
         return page_meta_demon_shop.category
 
     def run(self):
         conf = self.config.meta_demon_shop.meta_demon_shop_config
-        # 礼盒会开出突破券，券满了再买就浪费：先去把券打掉，下一轮再买
+        self.box = conf.box
+        logger.info(f'本轮购买 {self.box.value}')
+        # 突破券满着的时候先不买：先去把券打掉，下一轮再买
         if self.realm_raid_tickets_full():
             can_raid = conf.call_realm_raid and self.config.realm_raid.scheduler.enable
             if can_raid:
@@ -76,8 +78,8 @@ class ScriptTask(GameUi, MetaDemonShopAssets):
 
         self.goto_page(page_meta_demon_shop)
         currency = self.read_currency()
-        if currency is None or currency < BOX_PRICE:
-            logger.info(f'红叶数量 {currency}，不足 {BOX_PRICE}，本轮不购买')
+        if currency is None or currency < self.box.price:
+            logger.info(f'红叶数量 {currency}，不足 {self.box.price}，本轮不购买')
             self.finish(success=False, call_realm_raid=False)
 
         bought = self.buy_boxes(conf.buy_times)
@@ -141,11 +143,11 @@ class ScriptTask(GameUi, MetaDemonShopAssets):
         bought = 0
         while bought < times:
             currency = self.read_currency()
-            if currency is not None and currency < BOX_PRICE:
+            if currency is not None and currency < self.box.price:
                 logger.info(f'红叶剩余 {currency}，不够再买')
                 break
             if not self.open_buy_dialog():
-                logger.warning('没能打开超鬼王简易礼盒的购买弹窗')
+                logger.warning(f'没能打开超鬼王{self.box.label}的购买弹窗')
                 break
             if not self.confirm_purchase(currency):
                 logger.warning('购买没有成功，停止本轮')
@@ -155,10 +157,10 @@ class ScriptTask(GameUi, MetaDemonShopAssets):
         return bought
 
     def find_box(self) -> Optional[RuleClick]:
-        """在当前帧的商品列表里找简易礼盒，返回卡片上数量和价格两行的点击区域（落点在区域内随机）。"""
+        """在当前帧的商品列表里找要买的礼盒，返回卡片上数量和价格两行的点击区域（落点在区域内随机）。"""
         roi_x, roi_y = self.O_SHOP_ITEMS.roi[0], self.O_SHOP_ITEMS.roi[1]
         for result in self.O_SHOP_ITEMS.detect_and_ocr(self.device.image, logDisplay=False):
-            if BOX_KEYWORD not in result.ocr_text:
+            if self.box.keyword not in result.ocr_text:
                 continue
             box = result.box
             name_y = int(box[0, 1]) + roi_y
@@ -171,16 +173,16 @@ class ScriptTask(GameUi, MetaDemonShopAssets):
         return None
 
     def open_buy_dialog(self) -> bool:
-        """找到简易礼盒并点开购买弹窗；弹窗标题对不上就关掉重找。"""
+        """找到要买的礼盒并点开购买弹窗；弹窗标题对不上就关掉重找。"""
         swipes = 0
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
             self.screenshot()
             if self.appear(self.I_BUY_MAX):
                 title = self.O_BUY_TITLE.ocr(self.device.image)
-                if BOX_KEYWORD in title:
+                if self.box.keyword in title:
                     return True
-                logger.warning(f'购买弹窗是「{title}」，不是简易礼盒，关闭重找')
+                logger.warning(f'购买弹窗是「{title}」，不是{self.box.label}，关闭重找')
                 self.close_buy_dialog()
                 continue
             if self.ui_reward_appear_click():
@@ -190,7 +192,7 @@ class ScriptTask(GameUi, MetaDemonShopAssets):
                 continue
             target = self.find_box()
             if target is not None:
-                logger.info(f'找到简易礼盒，点击卡片价格区域 {tuple(target.roi_front)}')
+                logger.info(f'找到{self.box.label}，点击卡片价格区域 {tuple(target.roi_front)}')
                 self.click(target)
                 time.sleep(1)
                 continue
@@ -198,7 +200,7 @@ class ScriptTask(GameUi, MetaDemonShopAssets):
                 return False
             back_to_top = SWIPES_PER_PASS <= swipes < SWIPES_PER_PASS * 2
             swipes += 1
-            logger.info(f'当前屏没有简易礼盒，{"滑回顶部" if back_to_top else "向后翻"}（第 {swipes} 次滑动）')
+            logger.info(f'当前屏没有{self.box.label}，{"滑回顶部" if back_to_top else "向后翻"}（第 {swipes} 次滑动）')
             self.swipe(self.S_SHOP_SWIPE_DOWN if back_to_top else self.S_SHOP_SWIPE_UP)
             time.sleep(1)
         return False
@@ -215,14 +217,14 @@ class ScriptTask(GameUi, MetaDemonShopAssets):
             time.sleep(0.6)
             self.screenshot()
             total = self.read_total_price()
-            if (total is not None and total > BOX_PRICE) or (affordable is not None and affordable < 2):
+            if (total is not None and total > self.box.price) or (affordable is not None and affordable < 2):
                 logger.info(f'数量已拉满，总价 {total}')
                 return
         logger.warning('点了拉满但总价没有变化，按当前数量购买')
 
     def confirm_purchase(self, before: Optional[int]) -> bool:
         """弹窗已打开：数量拉满后购买。出现获得奖励或弹窗关闭算成功。"""
-        self.select_max(None if before is None else before // BOX_PRICE)
+        self.select_max(None if before is None else before // self.box.price)
         if not self.appear(self.I_BUY_CONFIRM):
             return False
         # 红叶图标只用来确认按钮在；落点在整个价格按钮内随机

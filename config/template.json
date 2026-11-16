@@ -2233,6 +2233,7 @@
       "float_time": "00:00:00"
     },
     "meta_demon_shop_config": {
+      "box": "超鬼王精致礼盒（8888）",
       "buy_times": 20,
       "call_realm_raid": true
     }
