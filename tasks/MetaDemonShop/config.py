@@ -33,7 +33,7 @@ def shop_scheduler() -> Scheduler:
 class MetaDemonShopConfig(ConfigBase):
     box: BoxType = Field(default=BoxType.FINE, title='购买的礼盒',
         description='用红叶购买哪一种礼盒，括号里是单价。红叶不够买一个时本轮不购买。')
-    buy_times: int = Field(default=20, ge=1, le=200, title='每轮购买次数',
+    buy_times: int = Field(default=8, ge=1, le=200, title='每轮购买次数',
         description='每次购买都会先把数量拉满（最多 50 个）再点购买；红叶不够买一个礼盒时提前结束。')
     call_realm_raid: bool = Field(default=True, title='买完后执行个人突破',
         description='本轮买到礼盒后回到庭院，并把个人突破的下次运行时间设为现在。个人突破任务本身需要已启用。')

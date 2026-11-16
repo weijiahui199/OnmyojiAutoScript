@@ -2234,7 +2234,7 @@
     },
     "meta_demon_shop_config": {
       "box": "超鬼王精致礼盒（8888）",
-      "buy_times": 20,
+      "buy_times": 8,
       "call_realm_raid": true
     }
   }

@@ -29,7 +29,7 @@ class ConfigChecks(unittest.TestCase):
     def test_defaults_rerun_two_minutes_after_a_purchase(self):
         conf = MetaDemonShop()
         self.assertEqual(conf.scheduler.success_interval, timedelta(minutes=2))
-        self.assertEqual(conf.meta_demon_shop_config.buy_times, 20)
+        self.assertEqual(conf.meta_demon_shop_config.buy_times, 8)
         self.assertTrue(conf.meta_demon_shop_config.call_realm_raid)
 
     def test_default_box_is_the_8888_one_and_boxes_are_told_apart_by_name(self):
