@@ -103,7 +103,7 @@ class MetaDemonAssets:
 	# 超鬼王主界面
 	I_MD_CHECK_MAIN_PAGE = RuleImage(roi_front=(994,148,18,68), roi_back=(963,110,81,180), threshold=0.8, method="Template matching", file="./tasks/MetaDemon/md/md_md_check_main_page.png")
 	# 庭院超鬼王活动入口
-	I_MAIN_GOTO_ACTIVITY = RuleImage(roi_front=(1188,304,35,28), roi_back=(1164,134,83,393), threshold=0.7, method="Template matching", file="./tasks/MetaDemon/md/md_main_goto_activity.png")
+	I_MAIN_GOTO_ACTIVITY = RuleImage(roi_front=(1187,222,35,26), roi_back=(1164,134,83,393), threshold=0.7, method="Template matching", file="./tasks/MetaDemon/md/md_main_goto_activity.png")
 	# 分享鬼王头像
 	I_SHARE_DEMON = RuleImage(roi_front=(47,137,80,82), roi_back=(47,137,80,82), threshold=0.8, method="Template matching", file="./tasks/MetaDemon/md/md_share_demon.png")
 	# 协助鬼王头像
